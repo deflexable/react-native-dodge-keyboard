@@ -1,0 +1,34 @@
+{
+  "name": "react-native-dodge-keyboard",
+  "version": "1.0.0",
+  "description": "react-native-dodge-keyboard is a tiny library designed to flawlessly move your UI out of the way of the keyboard",
+  "keywords": [
+    "react-native",
+    "ios",
+    "android",
+    "avoid",
+    "keyboard",
+    "dodge",
+    "keyboard"
+  ],
+  "homepage": "https://github.com/deflexable/react-native-dodge-keyboard#readme",
+  "bugs": {
+    "url": "https://github.com/deflexable/react-native-dodge-keyboard/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/deflexable/react-native-dodge-keyboard.git"
+  },
+  "license": "MIT",
+  "author": "Anthony",
+  "type": "commonjs",
+  "main": "index.js",
+  "types": "./index.d.ts",
+  "peerDependencies": {
+    "react": "*",
+    "react-native": "*"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  }
+}
