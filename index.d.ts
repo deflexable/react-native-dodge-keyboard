@@ -1,5 +1,5 @@
 import * as React from "react";
-import { ScrollView } from "react-native";
+import { ScrollView, View } from "react-native";
 
 export interface LiftUpDodge {
     /**
@@ -9,10 +9,11 @@ export interface LiftUpDodge {
     liftUp: number;
 
     /**
-     * A reference to the scrollable view that should be lifted.
-     * This should be a ref to a ScrollView, FlatList, or any custom scrollable view.
+     * A reference to the view that should be lifted.
+     * 
+     * null is returned if the view has been recently removed from the node hierarchy
      */
-    viewRef: ScrollView;
+    viewRef: ScrollView | View | null;
 }
 
 export interface DodgeKeyboardProps {
@@ -49,22 +50,25 @@ export interface DodgeKeyboardProps {
      *  - "VirtualizedList"
      *
      * If you want a custom scrollable element to support dodging,
-     * add the prop: `dodge-keyboard-scrollview={true}`.
+     * add the prop: `dodge_keyboard_scrollable={true}`.
      *
      * By default, "TextInput" is the only known input tag.
      * To enable dodging for a custom input element,
-     * add the prop: `dodge-keyboard-input={true}`.
+     * add the prop: `dodge_keyboard_input={true}`.
+     * 
+     * Input elements or views with dodge_keyboard_input={true} that are not inside a scrollable view must be manually lifted by responding to the `onHandleDodging` callback.
      */
     disableTagCheck?: boolean;
 
     /**
-     * If provided, this prevents ALL other input views from dodging the keyboard
-     * except the one with the matching `dodge-keyboard-focus-id` prop.
-     *
-     * This is useful when trying to dodge a non-input view
-     * or when you want strict control over which view should move.
+     * an handler used internally for checking if a view is focused
+     * 
+     * @default 
+     * ```js
+     *  r => r?.isFocused?.()
+     * ```
      */
-    forceDodgeFocusId?: string;
+    checkIfElementIsFocused?: (ref: View) => boolean;
 
     /**
      * Child element(s) wrapped by the dodge container.
@@ -82,9 +86,9 @@ export default function DodgeKeyboard(
 
 interface doHijackResult {
     /**
-     * continue crawling other react node hierarchy.
+     * element to be replace with, providing this basically ignores the `props` field
      */
-    persist?: boolean;
+    element?: boolean;
     /**
      * props injected into the hijacked node.
      */
@@ -98,3 +102,6 @@ interface ReactHijackerProps {
 }
 
 export function ReactHijacker(props: ReactHijackerProps): React.ReactElement | null;
+
+export function isDodgeScrollable(element: React.ReactNode, disableTagCheck?: boolean): boolean;
+export function isDodgeInput(element: React.ReactNode, disableTagCheck?: boolean): boolean;

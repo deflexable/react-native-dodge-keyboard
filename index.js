@@ -1,11 +1,19 @@
-import React, { cloneElement, useEffect, useRef, useState } from "react";
-import { Dimensions, Keyboard, StyleSheet } from "react-native";
+import { Children, cloneElement, createElement, forwardRef, isValidElement, memo, useEffect, useMemo, useRef, useState } from "react";
+import { Dimensions, findNodeHandle, Keyboard, StyleSheet, UIManager } from "react-native";
 
-export default function ({ children, offset = 10, disabled, onHandleDodging, disableTagCheck, forceDodgeFocusId }) {
+export default function ({ children, offset = 10, disabled, onHandleDodging, disableTagCheck, checkIfElementIsFocused }) {
+    if (checkIfElementIsFocused !== undefined) {
+        if (typeof checkIfElementIsFocused !== 'function')
+            throw 'checkIfElementIsFocused should be a function';
 
-    if (forceDodgeFocusId !== undefined) {
-        if (typeof forceDodgeFocusId !== 'string' || !forceDodgeFocusId.trim())
-            throw `forceDodgeFocusId should be a non-empty string but got ${forceDodgeFocusId}`;
+        checkIfElementIsFocused = niceFunction(checkIfElementIsFocused, 'checkIfElementIsFocused');
+    } else checkIfElementIsFocused = r => r?.isFocused?.();
+
+    if (onHandleDodging !== undefined) {
+        if (typeof onHandleDodging !== 'function')
+            throw 'onHandleDodging should be a function';
+
+        onHandleDodging = niceFunction(onHandleDodging, 'onHandleDodging');
     }
 
     if (!isNumber(offset)) throw `offset must be a valid number but got ${offset}`;
@@ -13,79 +21,106 @@ export default function ({ children, offset = 10, disabled, onHandleDodging, dis
     const [currentPaddedScroller, setCurrentPaddedScroller] = useState();
 
     /**
-     * @type {import("react").RefObject<{[key: string]: { scrollRef: import("react-native").ScrollView, inputRef: {[key: string]: import("react-native").TextInput}, focusIdMap: {[key: string]: string} }}>}
+     * @type {import("react").RefObject<{[key: string]: { __is_standalone: boolean, _standalone_props: { dodge_keyboard_offset?: number, dodge_keyboard_lift?: boolean }, scrollRef: import("react-native").ScrollView, inputRef: {[key: string]: { ref: import("react-native").TextInput, props: { dodge_keyboard_offset?: number, dodge_keyboard_lift?: boolean } }} }}>}
      */
     const viewRefsMap = useRef({});
     const isKeyboardVisible = useRef();
-    const onKeyboardChanged = useRef();
+    const doDodgeKeyboard = useRef();
     const previousLift = useRef();
 
     const clearPreviousDodge = (scrollId) => {
         if (previousLift.current && previousLift.current !== scrollId) {
             const viewRef = viewRefsMap.current[previousLift.current]?.scrollRef;
-            if (viewRef) onHandleDodging?.({ liftUp: 0, viewRef });
+            onHandleDodging?.({ liftUp: 0, viewRef: viewRef || null });
             previousLift.current = undefined;
         }
     }
 
-    onKeyboardChanged.current = () => {
-        const keyboardInfo = Keyboard.metrics();
-        const { width: windowWidth, height: windowHeight } = Dimensions.get('window');
+    doDodgeKeyboard.current = () => {
+        try {
+            const keyboardInfo = Keyboard.metrics();
+            const { width: windowWidth, height: windowHeight } = Dimensions.get('window');
 
-        if (
-            isKeyboardVisible.current &&
-            keyboardInfo &&
-            !disabled &&
-            (keyboardInfo.width === windowWidth ||
-                keyboardInfo.height + keyboardInfo.screenY === windowHeight) &&
-            keyboardInfo.screenY
-        ) {
-            for (const [scrollId, obj] of Object.entries(viewRefsMap.current)) {
-                const { scrollRef, inputRef, focusIdMap } = obj;
-                if (scrollRef) {
-                    for (const [inputId, inputObj] of Object.entries(inputRef)) {
-                        if (forceDodgeFocusId ? focusIdMap[inputId] === forceDodgeFocusId : inputObj?.isFocused?.()) {
-                            scrollRef?.getNativeScrollRef?.()?.measureInWindow?.((sx, sy, sw, sh) => {
-                                inputObj.measureInWindow((x, y) => { // y is dynamic
-                                    inputObj.measureLayout(scrollRef, (l, t, w, h) => { // t is fixed
-                                        const scrollInputY = y - sy;
+            console.log('doDodgeKeyboard');
+            if (
+                isKeyboardVisible.current &&
+                keyboardInfo &&
+                !disabled &&
+                (keyboardInfo.width === windowWidth ||
+                    keyboardInfo.height + keyboardInfo.screenY === windowHeight) &&
+                keyboardInfo.screenY
+            ) {
+                // console.log('doDodgeKeyboard 1 entries:', Object.keys(viewRefsMap.current).length);
+                for (const [scrollId, obj] of Object.entries(viewRefsMap.current)) {
+                    const { scrollRef, inputRef, __is_standalone, _standalone_props } = obj;
+                    if (scrollRef) {
+                        if (__is_standalone) {
+                            if (checkIfElementIsFocused(scrollRef)) {
+                                if (scrollRef.measureInWindow)
+                                    UIManager.measureInWindow(findNodeHandle(scrollRef), (x, y, w, h) => {
+                                        const { dodge_keyboard_offset } = _standalone_props || {};
+                                        const thisOffset = isNumber(dodge_keyboard_offset) ? dodge_keyboard_offset : offset;
 
-                                        if (scrollInputY >= 0 && scrollInputY <= sh) { // is input visible in viewport
-                                            const clampedLift = Math.min(h, keyboardInfo.screenY);
-
-                                            if (y + clampedLift >= keyboardInfo.screenY) { // is below keyboard
-                                                const requiredScrollY = (t - (keyboardInfo.screenY - sy)) + clampedLift + offset;
-                                                // for lifting up the scroll-view
-                                                const liftUp = Math.max(0, requiredScrollY - t);
-                                                clearPreviousDodge(scrollId);
-                                                if (liftUp) {
-                                                    previousLift.current = scrollId;
-                                                    onHandleDodging?.({ liftUp, viewRef: scrollRef });
-                                                }
-
-                                                const scrollLift = Math.max(0, (sy + sh + (offset >= 0 ? offset : 0)) - keyboardInfo.screenY);
-                                                const newScrollY = Math.min(requiredScrollY, t);
-
-                                                console.log('scrolling-to:', requiredScrollY, ' scrollLift:', scrollLift);
-                                                if (scrollLift) {
-                                                    setCurrentPaddedScroller([scrollId, scrollLift, newScrollY]);
-                                                } else {
-                                                    scrollRef.scrollTo({ y: newScrollY, animated: true });
-                                                    setCurrentPaddedScroller();
-                                                }
-                                            }
+                                        const liftUp = Math.max(0, (y - keyboardInfo.screenY) + Math.min(h + thisOffset, keyboardInfo.screenY));
+                                        clearPreviousDodge(scrollId);
+                                        if (liftUp) {
+                                            previousLift.current = scrollId;
+                                            onHandleDodging?.({ liftUp, viewRef: scrollRef });
                                         }
                                     });
-                                });
-                            });
-                            return;
+                                return;
+                            }
+                        } else {
+                            for (const { ref: inputObj, props } of Object.values(inputRef)) {
+                                if (checkIfElementIsFocused(inputObj)) {
+                                    UIManager.measureInWindow(findNodeHandle(scrollRef), ((sx, sy, sw, sh) => {
+                                        inputObj.measureInWindow((x, y) => { // y is dynamic
+                                            inputObj.measureLayout(scrollRef, (l, t, w, h) => { // t is fixed
+                                                const { dodge_keyboard_offset } = props || {};
+                                                const thisOffset = isNumber(dodge_keyboard_offset) ? dodge_keyboard_offset : offset;
+
+                                                const scrollInputY = y - sy;
+
+                                                if (scrollInputY >= 0 && scrollInputY <= sh) { // is input visible in viewport
+                                                    const clampedLift = Math.min(h + thisOffset, keyboardInfo.screenY);
+
+                                                    if (y + clampedLift >= keyboardInfo.screenY) { // is below keyboard
+                                                        const requiredScrollY = (t - (keyboardInfo.screenY - sy)) + clampedLift;
+                                                        // for lifting up the scroll-view
+                                                        const liftUp = Math.max(0, requiredScrollY - t);
+                                                        clearPreviousDodge(scrollId);
+                                                        if (liftUp) {
+                                                            previousLift.current = scrollId;
+                                                            onHandleDodging?.({ liftUp, viewRef: scrollRef });
+                                                        }
+
+                                                        const scrollLift = Math.max(0, (sy + sh + (thisOffset >= 0 ? thisOffset : 0)) - keyboardInfo.screenY);
+                                                        const newScrollY = Math.min(requiredScrollY, t);
+
+                                                        console.log('scrolling-to:', requiredScrollY, ' scrollLift:', scrollLift);
+                                                        if (scrollLift) {
+                                                            setCurrentPaddedScroller([scrollId, scrollLift, newScrollY]);
+                                                        } else {
+                                                            scrollRef.scrollTo({ y: newScrollY, animated: true });
+                                                            setCurrentPaddedScroller();
+                                                        }
+                                                    }
+                                                }
+                                            });
+                                        });
+                                    }));
+                                    return;
+                                }
+                            }
                         }
                     }
                 }
+            } else {
+                setCurrentPaddedScroller();
+                clearPreviousDodge();
             }
-        } else {
-            clearPreviousDodge();
-            setCurrentPaddedScroller();
+        } catch (error) {
+            console.error('doDodgeKeyboard err:', error);
         }
     }
 
@@ -93,35 +128,37 @@ export default function ({ children, offset = 10, disabled, onHandleDodging, dis
 
     useEffect(() => {
         if (currentPaddedScroller) {
-            viewRefsMap.current[paddedId].scrollRef.scrollTo({ y: paddedScroll, animated: true });
+            const ref = viewRefsMap.current[paddedId]?.scrollRef;
+            if (ref) {
+                if (ref.scrollTo) {
+                    ref.scrollTo?.({ y: paddedScroll, animated: true });
+                } else if (ref.scrollToOffset) {
+                    ref.scrollToOffset?.({ offset: paddedScroll, animated: true });
+                } else {
+                    ref.getScrollResponder?.()?.scrollTo?.({ y: paddedScroll, animated: true });
+                }
+            }
         }
     }, [currentPaddedScroller]);
 
     useEffect(() => {
-        try {
-            onKeyboardChanged.current();
-        } catch (error) {
-            console.error('onDodgeKeyboard err:', error);
-        }
-    }, [offset, !disabled, !forceDodgeFocusId]);
+        doDodgeKeyboard.current();
+    }, [offset, !disabled]);
 
     useEffect(() => {
-        if (disabled) {
-            isKeyboardVisible.current = false;
-            return;
-        }
+        if (disabled) return;
         const frameListener = Keyboard.addListener('keyboardDidChangeFrame', e => {
-            onKeyboardChanged.current();
+            doDodgeKeyboard.current();
         });
 
         const showListener = Keyboard.addListener('keyboardDidShow', e => {
             isKeyboardVisible.current = true;
-            onKeyboardChanged.current();
+            doDodgeKeyboard.current();
         });
 
         const hiddenListener = Keyboard.addListener('keyboardDidHide', e => {
             isKeyboardVisible.current = false;
-            onKeyboardChanged.current();
+            doDodgeKeyboard.current();
         });
 
         return () => {
@@ -134,18 +171,81 @@ export default function ({ children, offset = 10, disabled, onHandleDodging, dis
     return (
         <ReactHijacker
             doHijack={(node, path) => {
-                if (isDodgeScrollable(node, disableTagCheck)) {
+                if (node?.props?.['dodge_keyboard_scan_off']) return { element: node };
+
+                const isStandalone = isDodgeInput(node);
+
+                if (isStandalone || isDodgeScrollable(node, disableTagCheck)) {
                     const scrollId = path.join('=>');
                     const initNode = () => {
                         if (!viewRefsMap.current[scrollId])
                             viewRefsMap.current[scrollId] = { inputRef: {} };
+
+                        if (isStandalone) {
+                            viewRefsMap.current[scrollId].__is_standalone = true;
+                            viewRefsMap.current[scrollId]._standalone_props = {
+                                dodge_keyboard_offset: node.props?.dodge_keyboard_offset,
+                                dodge_keyboard_lift: node.props?.dodge_keyboard_lift
+                            };
+                        }
                     }
                     const shouldPad = scrollId === paddedId;
                     const contentStyle = shouldPad && StyleSheet.flatten(node.props?.contentContainerStyle);
-                    const dodgeFocusIdDuplicateCheck = {};
+                    const rootRenderItem = node.prop?.renderItem;
+                    const rootKeyExtractor = node.prop?.keyExtractor;
+                    const hasInternalList = !isStandalone && (typeof rootRenderItem === 'function' && !node.props?.children);
+
+                    const injectChild = (children, childPath) =>
+                        ReactHijacker({
+                            children,
+                            path: childPath,
+                            doHijack: (inputNode, path) => {
+                                if (isDodgeInput(inputNode, disableTagCheck)) {
+                                    const inputId = path.join('=>');
+                                    const initInputNode = () => {
+                                        initNode();
+                                        if (!viewRefsMap.current[scrollId].inputRef[inputId])
+                                            viewRefsMap.current[scrollId].inputRef[inputId] = {};
+                                        viewRefsMap.current[scrollId].inputRef[inputId].props = {
+                                            dodge_keyboard_offset: inputNode.props?.dodge_keyboard_offset,
+                                            dodge_keyboard_lift: inputNode.props?.dodge_keyboard_lift
+                                        };
+                                    }
+
+                                    initInputNode();
+
+                                    return {
+                                        props: {
+                                            ...inputNode.props,
+                                            onFocus: (...args) => {
+                                                doDodgeKeyboard.current();
+                                                return inputNode.props?.onFocus?.(...args);
+                                            },
+                                            onLayout: (...args) => {
+                                                doDodgeKeyboard.current();
+                                                return inputNode.props?.onLayout?.(...args);
+                                            },
+                                            ref: r => {
+                                                if (r) {
+                                                    initInputNode();
+
+                                                    viewRefsMap.current[scrollId].inputRef[inputId].ref = r;
+                                                } else if (viewRefsMap.current[scrollId]?.inputRef?.[inputId]) {
+                                                    delete viewRefsMap.current[scrollId].inputRef[inputId];
+                                                }
+
+                                                const thatRef = inputNode.props?.ref;
+                                                if (typeof thatRef === 'function') {
+                                                    thatRef(r);
+                                                } else if (thatRef) thatRef.current = r;
+                                            }
+                                        }
+                                    };
+                                }
+                            }
+                        });
 
                     return {
-                        persist: true,
                         props: {
                             ...node.props,
                             ...shouldPad ? {
@@ -167,65 +267,32 @@ export default function ({ children, offset = 10, disabled, onHandleDodging, dis
                                     thatRef(r);
                                 } else if (thatRef) thatRef.current = r;
                             },
+                            ...isStandalone ? {
+                                onFocus: (...args) => {
+                                    doDodgeKeyboard.current();
+                                    return node.props?.onFocus?.(...args);
+                                }
+                            } : {},
                             onLayout: (...args) => {
-                                onKeyboardChanged.current();
+                                doDodgeKeyboard.current();
                                 return node.props?.onLayout?.(...args);
                             },
-                            children:
-                                <ReactHijacker
-                                    path={path}
-                                    doHijack={(inputNode, path) => {
-                                        if (isDodgeInput(inputNode, disableTagCheck)) {
-                                            const inputId = path.join('=>');
+                            ...isStandalone ? {} :
+                                hasInternalList ? {
+                                    renderItem: (...args) => {
+                                        const { item, index } = args[0] || {};
 
-                                            const dodge_focus_id = inputNode.props?.['dodge-keyboard-focus-id'];
-
-                                            if (dodge_focus_id) {
-                                                if (typeof dodge_focus_id !== 'string' || !dodge_focus_id.trim())
-                                                    throw `dodge-keyboard-focus-id must be a non-empty string but got ${dodge_focus_id}`;
-
-                                                if (dodgeFocusIdDuplicateCheck[dodge_focus_id])
-                                                    throw `duplicate dodge-keyboard-focus-id must not exist inside the same <DodgeKeyboard> ancestor component`;
-
-                                                dodgeFocusIdDuplicateCheck[dodge_focus_id] = true;
-
-                                                initNode();
-                                                viewRefsMap.current[scrollId].focusIdMap[inputId] = dodge_focus_id;
-                                            }
-
-                                            return {
-                                                persist: true,
-                                                props: {
-                                                    ...inputNode.props,
-                                                    ...dodge_focus_id ? { key: dodge_focus_id } : {},
-                                                    onFocus: (...args) => {
-                                                        onKeyboardChanged.current();
-                                                        return inputNode.props?.onFocus?.(...args);
-                                                    },
-                                                    onLayout: (...args) => {
-                                                        onKeyboardChanged.current();
-                                                        return inputNode.props?.onLayout?.(...args);
-                                                    },
-                                                    ref: r => {
-                                                        if (r) {
-                                                            initNode();
-
-                                                            viewRefsMap.current[scrollId].inputRef[inputId] = r;
-                                                        } else if (viewRefsMap.current[scrollId]?.inputRef?.[inputId]) {
-                                                            delete viewRefsMap.current[scrollId].inputRef[inputId];
-                                                        }
-
-                                                        const thatRef = inputNode.props?.ref;
-                                                        if (typeof thatRef === 'function') {
-                                                            thatRef(r);
-                                                        } else if (thatRef) thatRef.current = r;
-                                                    }
-                                                }
-                                            };
-                                        }
-                                    }}>
-                                    {node.props?.children}
-                                </ReactHijacker>
+                                        return injectChild(
+                                            rootRenderItem(...args),
+                                            [
+                                                ...path,
+                                                index,
+                                                ...typeof rootKeyExtractor === 'function' ?
+                                                    [rootKeyExtractor?.(item, index)] : []
+                                            ]
+                                        );
+                                    }
+                                } : { children: injectChild(node.props?.children, path) }
                         }
                     };
                 }
@@ -233,28 +300,100 @@ export default function ({ children, offset = 10, disabled, onHandleDodging, dis
             {children}
         </ReactHijacker>
     );
+};
+
+const niceFunction = (func, message) => {
+    return (...args) => {
+        try {
+            return func(...args);
+        } catch (error) {
+            console.error(`${message} err:`, error);
+        }
+    }
 }
 
 const isNumber = t => typeof t === 'number' && !isNaN(t) && Number.isFinite(t);
 
+const REACT_SYMBOLS = {
+    forwardRef: Symbol.for('react.forward_ref'),
+    memo: Symbol.for('react.memo')
+};
+
 export function ReactHijacker({ children, doHijack, path }) {
-    let proceedHijacking = true;
+    const renderRefs = useMemo(() => new Map(), []);
+
+    const instantDoHijack = useRef();
+    instantDoHijack.current = doHijack;
 
     const injectIntoTree = (node, path = [], wasArray) => {
-        if (!proceedHijacking || !node) return node;
+        if (!node) return node;
         if (Array.isArray(node)) {
-            return React.Children.map(node, (v, i) => injectIntoTree(v, [...path, i], true));
+            return Children.map(node, (v, i) => injectIntoTree(v, [...path, i], true));
         }
-        if (!React.isValidElement(node)) return node;
+        if (!isValidElement(node)) return node;
 
-        path = [...path, ...wasArray ? [] : [0], buildNodeId(node)];
+        path = [...path, ...wasArray ? [] : [0], getNodeId(node)];
 
         let thisObj;
-        if (thisObj = doHijack(node, path)) {
-            const { persist, props } = thisObj;
-            proceedHijacking = persist;
+        if (thisObj = instantDoHijack.current?.(node, path)) {
+            const { element, props } = thisObj;
 
-            return cloneElement(node, props);
+            if (Object.hasOwn(thisObj, 'element')) return element;
+            if (props) return cloneElement(node, props);
+            return node;
+        }
+
+        if (!isHostElement(node)) {
+            const wrapNodeType = (nodeType, pathway, pathKey) => {
+                pathway = [...pathway, getNodeId(undefined, nodeType, pathKey)];
+                const path_id = pathway.join(',');
+                let renderRefStore = renderRefs.get(nodeType);
+
+                if (renderRefStore?.[path_id]) return renderRefStore[path_id];
+
+                // if (doLogging) console.log('wrapNodeType path:', pathway, ' node:', nodeType);
+                const render = (renderedNode) => {
+                    // if (doLogging) console.log('deep path:', pathway, ' node:', renderedNode);
+                    return injectIntoTree(renderedNode, pathway);
+                }
+
+                let newType;
+
+                if (typeof nodeType === 'function') { // check self closed tag
+                    newType = hijackRender(nodeType, render);
+                } else if (nodeType?.$$typeof === REACT_SYMBOLS.forwardRef) {
+                    newType = forwardRef(hijackRender(nodeType.render, render));
+                } else if (nodeType?.$$typeof === REACT_SYMBOLS.memo) {
+                    newType = memo(wrapNodeType(nodeType.type, pathway), nodeType.compare);
+                    newType.displayName = nodeType.displayName || nodeType.name;
+                }
+
+                if (newType) {
+                    if (!renderRefStore) renderRefs.set(nodeType, renderRefStore = {});
+                    renderRefStore[path_id] = newType;
+                    return newType;
+                }
+
+                return nodeType;
+            }
+
+            if (
+                typeof node.type === 'function' || // check self closed tag
+                node.type?.$$typeof === REACT_SYMBOLS.forwardRef || // check forwardRef
+                node.type?.$$typeof === REACT_SYMBOLS.memo // check memo
+            ) {
+                // if (doLogging) console.log('doLog path:', path, ' node:', node);
+                const injectedType = wrapNodeType(node.type, path.slice(0, -1), node.key);
+                return createElement(
+                    injectedType,
+                    {
+                        ...node.props,
+                        key: node.key,
+                        // ...isForwardRef ? { ref: node.ref } : {}
+                    },
+                    node.props?.children
+                );
+            }
         }
 
         const children = node.props?.children;
@@ -267,40 +406,79 @@ export function ReactHijacker({ children, doHijack, path }) {
     };
 
     return injectIntoTree(children, path);
+};
+
+const hijackRender = (type, doHijack) =>
+    new Proxy(type, {
+        apply(target, thisArg, args) {
+            const renderedNode = Reflect.apply(target, thisArg, args);
+            return doHijack(renderedNode);
+        },
+        get(target, prop) {
+            return target[prop];
+        },
+        set(target, prop, value) {
+            target[prop] = value;
+            return true;
+        }
+    });
+
+function getNodeId(node, typeObj, typeKey) {
+    if ((!node && !typeObj) || (node && !isValidElement(node))) return `${node}`;
+
+    const type = typeObj || node?.type;
+    const withKey = (s) => `${s}:${[typeKey || node?.key].find(v => ![null, undefined].includes(v)) || null}`;
+    const withWrapper = (tag, name) => `@${tag}#${name}#`;
+
+    // Host component
+    if (typeof type === 'string' || typeof type === 'number') return withKey(type);
+
+    if (type?.displayName) return withKey(type.displayName);
+
+    // Function component
+    if (typeof type === "function") return withKey(type.name);
+
+    if (type?.$$typeof === REACT_SYMBOLS.forwardRef) { // forwardRef
+        return withKey(withWrapper('forwardRef', type.render?.name));
+    } else if (type?.$$typeof === REACT_SYMBOLS.memo) { // memo
+        return withKey(withWrapper('memo', ''));
+    }
+
+    return withKey(
+        type?.name ||
+        // node?.name ||
+        withWrapper('Fragment', type?.$$typeof?.toString?.() || '')
+    );
+};
+
+export function isHostElement(node) {
+    if (!node) return true;
+    const t = typeof node.type;
+
+    return (
+        t === 'string' ||
+        t === 'number' || // RN internal tags
+        node?.type?.Context !== undefined ||
+        (t !== 'function' && t !== 'object')
+    );
 }
 
-const buildNodeId = (node) => {
-    const type = node?.type;
-    const finalType = typeof type === "string" ? type : (type?.displayName || type?.name || "@#Fragment");
-    return `${finalType}:${node?.key}`;
-}
-
-const isDodgeScrollable = (element, disableTagCheck) => {
-    if (element?.props?.['dodge-keyboard-scrollview'])
-        return true;
+export const isDodgeScrollable = (element, disableTagCheck) => {
+    if (element?.props?.['dodge_keyboard_scrollable']) return true;
     if (!element?.type || element?.props?.horizontal || disableTagCheck) return false;
 
     const scrollableTypes = ["ScrollView", "FlatList", "SectionList", "VirtualizedList"];
 
-    return scrollableTypes.includes(element.type.displayName)
+    return scrollableTypes.includes(element.type?.displayName)
         || scrollableTypes.includes(element.type?.name);
 };
 
-const isDodgeInput = (element, disableTagCheck) => {
-    if (
-        element?.props?.['dodge-keyboard-input'] ||
-        element?.props?.['dodge-keyboard-focus-id']
-    ) return true;
-    if (disableTagCheck) return false;
-    const { placeholder, onChangeText } = element?.props || {};
-    if (
-        typeof onChangeText === 'function' ||
-        (typeof placeholder === 'string' && placeholder.trim())
-    ) return true;
-    if (!element?.type) return false;
+export const isDodgeInput = (element, disableTagCheck) => {
+    if (element?.props?.['dodge_keyboard_input']) return true;
+    if (disableTagCheck || !element?.type) return false;
 
     const inputTypes = ["TextInput"];
 
-    return inputTypes.includes(element.type.displayName)
+    return inputTypes.includes(element.type?.displayName)
         || inputTypes.includes(element.type?.name);
 };
