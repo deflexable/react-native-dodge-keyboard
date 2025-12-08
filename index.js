@@ -41,7 +41,7 @@ export default function ({ children, offset = 10, disabled, onHandleDodging, dis
             const keyboardInfo = Keyboard.metrics();
             const { width: windowWidth, height: windowHeight } = Dimensions.get('window');
 
-            console.log('doDodgeKeyboard');
+            // console.log('doDodgeKeyboard');
             if (
                 isKeyboardVisible.current &&
                 keyboardInfo &&
@@ -97,7 +97,7 @@ export default function ({ children, offset = 10, disabled, onHandleDodging, dis
                                                         const scrollLift = Math.max(0, (sy + sh + (thisOffset >= 0 ? thisOffset : 0)) - keyboardInfo.screenY);
                                                         const newScrollY = Math.min(requiredScrollY, t);
 
-                                                        console.log('scrolling-to:', requiredScrollY, ' scrollLift:', scrollLift);
+                                                        // console.log('scrolling-to:', requiredScrollY, ' scrollLift:', scrollLift);
                                                         if (scrollLift) {
                                                             setCurrentPaddedScroller([scrollId, scrollLift, newScrollY]);
                                                         } else {
@@ -195,6 +195,14 @@ export default function ({ children, offset = 10, disabled, onHandleDodging, dis
                     const rootKeyExtractor = node.prop?.keyExtractor;
                     const hasInternalList = !isStandalone && (typeof rootRenderItem === 'function' && !node.props?.children);
 
+                    const doRefCleanup = () => {
+                        if (
+                            viewRefsMap.current[scrollId]?.scrollRef ||
+                            Object.keys(viewRefsMap.current[scrollId]?.inputRef || {}).length
+                        ) return;
+                        delete viewRefsMap.current[scrollId];
+                    }
+
                     const injectChild = (children, childPath) =>
                         ReactHijacker({
                             children,
@@ -232,6 +240,7 @@ export default function ({ children, offset = 10, disabled, onHandleDodging, dis
                                                     viewRefsMap.current[scrollId].inputRef[inputId].ref = r;
                                                 } else if (viewRefsMap.current[scrollId]?.inputRef?.[inputId]) {
                                                     delete viewRefsMap.current[scrollId].inputRef[inputId];
+                                                    doRefCleanup();
                                                 }
 
                                                 const thatRef = inputNode.props?.ref;
@@ -259,7 +268,8 @@ export default function ({ children, offset = 10, disabled, onHandleDodging, dis
                                     initNode();
                                     viewRefsMap.current[scrollId].scrollRef = r;
                                 } else if (viewRefsMap.current[scrollId]) {
-                                    delete viewRefsMap.current[scrollId];
+                                    viewRefsMap.current[scrollId].scrollRef = undefined;
+                                    doRefCleanup();
                                 }
 
                                 const thatRef = node.props?.ref;
@@ -325,14 +335,15 @@ export function ReactHijacker({ children, doHijack, path }) {
     const instantDoHijack = useRef();
     instantDoHijack.current = doHijack;
 
-    const injectIntoTree = (node, path = [], wasArray) => {
+    const injectIntoTree = (node, path = [], arrayIndex) => {
         if (!node) return node;
         if (Array.isArray(node)) {
-            return Children.map(node, (v, i) => injectIntoTree(v, [...path, i], true));
+            path = [...path, ...arrayIndex === undefined ? [0] : [arrayIndex]];
+            return Children.map(node, (v, i) => injectIntoTree(v, path, i));
         }
         if (!isValidElement(node)) return node;
 
-        path = [...path, ...wasArray ? [] : [0], getNodeId(node)];
+        path = [...path, ...arrayIndex === undefined ? [0] : [arrayIndex], getNodeId(node)];
 
         let thisObj;
         if (thisObj = instantDoHijack.current?.(node, path)) {
