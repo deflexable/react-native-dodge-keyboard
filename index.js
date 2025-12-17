@@ -1,5 +1,5 @@
 import { Children, cloneElement, createElement, forwardRef, isValidElement, memo, useEffect, useMemo, useRef, useState } from "react";
-import { Dimensions, findNodeHandle, Keyboard, StyleSheet, UIManager } from "react-native";
+import { Animated, Dimensions, findNodeHandle, Keyboard, Platform, StyleSheet, UIManager, useAnimatedValue } from "react-native";
 
 export default function ({ children, offset = 10, disabled, onHandleDodging, disableTagCheck, checkIfElementIsFocused }) {
     if (checkIfElementIsFocused !== undefined) {
@@ -24,9 +24,9 @@ export default function ({ children, offset = 10, disabled, onHandleDodging, dis
      * @type {import("react").RefObject<{[key: string]: { __is_standalone: boolean, _standalone_props: { dodge_keyboard_offset?: number, dodge_keyboard_lift?: boolean }, scrollRef: import("react-native").ScrollView, inputRef: {[key: string]: { ref: import("react-native").TextInput, props: { dodge_keyboard_offset?: number, dodge_keyboard_lift?: boolean } }} }}>}
      */
     const viewRefsMap = useRef({});
-    const isKeyboardVisible = useRef();
     const doDodgeKeyboard = useRef();
     const previousLift = useRef();
+    const wasVisible = useRef();
 
     const clearPreviousDodge = (scrollId) => {
         if (previousLift.current && previousLift.current !== scrollId) {
@@ -36,14 +36,26 @@ export default function ({ children, offset = 10, disabled, onHandleDodging, dis
         }
     }
 
-    doDodgeKeyboard.current = () => {
+    /**
+     * @param {import('react-native').KeyboardEvent | undefined} event 
+     * @param {boolean} visible
+     */
+    doDodgeKeyboard.current = (event, visible) => {
+        if (typeof visible !== 'boolean') {
+            if (typeof wasVisible.current === 'boolean') {
+                visible = wasVisible.current;
+            } else return;
+        }
+
+        wasVisible.current = visible;
+
         try {
-            const keyboardInfo = Keyboard.metrics();
+            const keyboardInfo = event?.endCoordinates || Keyboard.metrics();
             const { width: windowWidth, height: windowHeight } = Dimensions.get('window');
 
             // console.log('doDodgeKeyboard');
             if (
-                isKeyboardVisible.current &&
+                visible &&
                 keyboardInfo &&
                 !disabled &&
                 (keyboardInfo.width === windowWidth ||
@@ -101,7 +113,7 @@ export default function ({ children, offset = 10, disabled, onHandleDodging, dis
                                                         if (scrollLift) {
                                                             setCurrentPaddedScroller([scrollId, scrollLift, newScrollY]);
                                                         } else {
-                                                            scrollRef.scrollTo({ y: newScrollY, animated: true });
+                                                            tryPerformScroll(scrollRef, newScrollY, true);
                                                             setCurrentPaddedScroller();
                                                         }
                                                     }
@@ -124,20 +136,24 @@ export default function ({ children, offset = 10, disabled, onHandleDodging, dis
         }
     }
 
+    const tryPerformScroll = (ref, y, animated = true) => {
+        if (!ref) return;
+
+        if (ref.scrollTo) {
+            ref.scrollTo?.({ y, animated });
+        } else if (ref.scrollToOffset) {
+            ref.scrollToOffset?.({ offset: y, animated });
+        } else {
+            ref.getScrollResponder?.()?.scrollTo?.({ y, animated });
+        }
+    }
+
     const [paddedId, paddedSize, paddedScroll] = currentPaddedScroller || [];
 
     useEffect(() => {
         if (currentPaddedScroller) {
             const ref = viewRefsMap.current[paddedId]?.scrollRef;
-            if (ref) {
-                if (ref.scrollTo) {
-                    ref.scrollTo?.({ y: paddedScroll, animated: true });
-                } else if (ref.scrollToOffset) {
-                    ref.scrollToOffset?.({ offset: paddedScroll, animated: true });
-                } else {
-                    ref.getScrollResponder?.()?.scrollTo?.({ y: paddedScroll, animated: true });
-                }
-            }
+            tryPerformScroll(ref, paddedScroll, false);
         }
     }, [currentPaddedScroller]);
 
@@ -147,19 +163,15 @@ export default function ({ children, offset = 10, disabled, onHandleDodging, dis
 
     useEffect(() => {
         if (disabled) return;
-        const frameListener = Keyboard.addListener('keyboardDidChangeFrame', e => {
-            doDodgeKeyboard.current();
-        });
-
-        const showListener = Keyboard.addListener('keyboardDidShow', e => {
-            isKeyboardVisible.current = true;
-            doDodgeKeyboard.current();
-        });
-
-        const hiddenListener = Keyboard.addListener('keyboardDidHide', e => {
-            isKeyboardVisible.current = false;
-            doDodgeKeyboard.current();
-        });
+        const frameListener = Keyboard.addListener('keyboardDidChangeFrame', e => doDodgeKeyboard.current(e));
+        const showListener = Keyboard.addListener(
+            Platform.OS === 'android' ? 'keyboardDidShow' : 'keyboardWillShow',
+            e => doDodgeKeyboard.current(e, true)
+        );
+        const hiddenListener = Keyboard.addListener(
+            Platform.OS === 'android' ? 'keyboardDidHide' : 'keyboardWillHide',
+            e => doDodgeKeyboard.current(e, false)
+        );
 
         return () => {
             frameListener.remove();
@@ -189,7 +201,7 @@ export default function ({ children, offset = 10, disabled, onHandleDodging, dis
                             };
                         }
                     }
-                    const shouldPad = scrollId === paddedId;
+                    const shouldPad = !isStandalone && scrollId === paddedId;
                     const contentStyle = shouldPad && StyleSheet.flatten(node.props?.contentContainerStyle);
                     const rootRenderItem = node.prop?.renderItem;
                     const rootKeyExtractor = node.prop?.keyExtractor;
@@ -254,6 +266,8 @@ export default function ({ children, offset = 10, disabled, onHandleDodging, dis
                             }
                         });
 
+                    const extractedKeysMap = [];
+
                     return {
                         props: {
                             ...node.props,
@@ -289,17 +303,31 @@ export default function ({ children, offset = 10, disabled, onHandleDodging, dis
                             },
                             ...isStandalone ? {} :
                                 hasInternalList ? {
+                                    ...typeof node.prop?.keyExtractor === 'function' ?
+                                        {
+                                            keyExtractor: (...args) => {
+                                                const res = node.prop.keyExtractor(...args);
+                                                extractedKeysMap[args[1]] = res;
+                                                return res;
+                                            }
+                                        } : {},
                                     renderItem: (...args) => {
                                         const { item, index } = args[0] || {};
+                                        const childNode = rootRenderItem(...args);
+                                        let isUnique;
+
+                                        const extractedKey = extractedKeysMap[index];
+
+                                        if (isSomething(extractedKey)) {
+                                            isUnique = extractedKeysMap.findIndex(v => isKeyEqual(v, extractedKey)) === index;
+                                        } else {
+                                            const nodeKey = isSomething(childNode?.key) ? childNode.key : item.key;
+                                            isUnique = isSomething(nodeKey) && !extractedKeysMap.some(v => isKeyEqual(v, nodeKey));
+                                        }
 
                                         return injectChild(
-                                            rootRenderItem(...args),
-                                            [
-                                                ...path,
-                                                index,
-                                                ...typeof rootKeyExtractor === 'function' ?
-                                                    [rootKeyExtractor?.(item, index)] : []
-                                            ]
+                                            childNode,
+                                            [...path, ...isUnique ? [] : [index]]
                                         );
                                     }
                                 } : { children: injectChild(node.props?.children, path) }
@@ -323,6 +351,8 @@ const niceFunction = (func, message) => {
 }
 
 const isNumber = t => typeof t === 'number' && !isNaN(t) && Number.isFinite(t);
+const isSomething = v => ![undefined, null].includes(v);
+const isKeyEqual = (a, b) => isSomething(a) && isSomething(b) && String(a) === String(b);
 
 const REACT_SYMBOLS = {
     forwardRef: Symbol.for('react.forward_ref'),
@@ -330,20 +360,22 @@ const REACT_SYMBOLS = {
 };
 
 export function ReactHijacker({ children, doHijack, path }) {
-    const renderRefs = useMemo(() => new Map(), []);
-
     const instantDoHijack = useRef();
     instantDoHijack.current = doHijack;
 
-    const injectIntoTree = (node, path = [], arrayIndex) => {
+    const injectIntoTree = (node, path = [], handledNodePath) => {
         if (!node) return node;
         if (Array.isArray(node)) {
-            path = [...path, ...arrayIndex === undefined ? [0] : [arrayIndex]];
-            return Children.map(node, (v, i) => injectIntoTree(v, path, i));
+            path = [...path, ...handledNodePath ? [] : [0]];
+            return Children.map(node, (v, i) => {
+                const isUnique = isSomething(v?.key) && node.findIndex(b => isKeyEqual(b?.key, v?.key)) === i;
+
+                return injectIntoTree(v, [...path, ...isUnique ? [] : [i]], true);
+            });
         }
         if (!isValidElement(node)) return node;
 
-        path = [...path, ...arrayIndex === undefined ? [0] : [arrayIndex], getNodeId(node)];
+        path = [...path, ...(handledNodePath || isSomething(node.key)) ? [] : [0], getNodeId(node)];
 
         let thisObj;
         if (thisObj = instantDoHijack.current?.(node, path)) {
@@ -357,10 +389,6 @@ export function ReactHijacker({ children, doHijack, path }) {
         if (!isHostElement(node)) {
             const wrapNodeType = (nodeType, pathway, pathKey) => {
                 pathway = [...pathway, getNodeId(undefined, nodeType, pathKey)];
-                const path_id = pathway.join(',');
-                let renderRefStore = renderRefs.get(nodeType);
-
-                if (renderRefStore?.[path_id]) return renderRefStore[path_id];
 
                 // if (doLogging) console.log('wrapNodeType path:', pathway, ' node:', nodeType);
                 const render = (renderedNode) => {
@@ -368,23 +396,15 @@ export function ReactHijacker({ children, doHijack, path }) {
                     return injectIntoTree(renderedNode, pathway);
                 }
 
-                let newType;
-
                 if (typeof nodeType === 'function') { // check self closed tag
-                    newType = hijackRender(nodeType, render);
+                    return hijackRender(nodeType, render);
                 } else if (nodeType?.$$typeof === REACT_SYMBOLS.forwardRef) {
-                    newType = forwardRef(hijackRender(nodeType.render, render));
+                    return forwardRef(hijackRender(nodeType.render, render));
                 } else if (nodeType?.$$typeof === REACT_SYMBOLS.memo) {
-                    newType = memo(wrapNodeType(nodeType.type, pathway), nodeType.compare);
+                    const newType = memo(wrapNodeType(nodeType.type, pathway), nodeType.compare);
                     newType.displayName = nodeType.displayName || nodeType.name;
-                }
-
-                if (newType) {
-                    if (!renderRefStore) renderRefs.set(nodeType, renderRefStore = {});
-                    renderRefStore[path_id] = newType;
                     return newType;
                 }
-
                 return nodeType;
             }
 
@@ -394,15 +414,21 @@ export function ReactHijacker({ children, doHijack, path }) {
                 node.type?.$$typeof === REACT_SYMBOLS.memo // check memo
             ) {
                 // if (doLogging) console.log('doLog path:', path, ' node:', node);
-                const injectedType = wrapNodeType(node.type, path.slice(0, -1), node.key);
-                return createElement(
-                    injectedType,
-                    {
-                        ...node.props,
-                        key: node.key,
-                        // ...isForwardRef ? { ref: node.ref } : {}
-                    },
-                    node.props?.children
+                return (
+                    <__HijackNodePath>
+                        {() => {
+                            const hijackType = useMemo(() => wrapNodeType(node.type, path.slice(0, -1), node.key), [node.type]);
+
+                            return createElement(
+                                hijackType,
+                                {
+                                    ...node.props,
+                                    key: node.key
+                                },
+                                node.props?.children
+                            );
+                        }}
+                    </__HijackNodePath>
                 );
             }
         }
@@ -418,6 +444,11 @@ export function ReactHijacker({ children, doHijack, path }) {
 
     return injectIntoTree(children, path);
 };
+
+function __HijackNodePath({ children }) {
+    return children?.();
+}
+__HijackNodePath.displayName = '__HijackNodePath';
 
 const hijackRender = (type, doHijack) =>
     new Proxy(type, {
@@ -493,3 +524,61 @@ export const isDodgeInput = (element, disableTagCheck) => {
     return inputTypes.includes(element.type?.displayName)
         || inputTypes.includes(element.type?.name);
 };
+
+export const KeyboardPlaceholderView = ({ doHeight }) => {
+    const height = useAnimatedValue(0);
+
+    const instantDoHeight = useRef();
+    instantDoHeight.current = doHeight;
+
+    useEffect(() => {
+        let wasVisible;
+        /**
+         * @param {import('react-native').KeyboardEvent} event 
+         * @param {boolean} visible 
+         */
+        const updateKeyboardHeight = (event, visible) => {
+            if (typeof visible !== 'boolean') {
+                if (typeof wasVisible === 'boolean') {
+                    visible = wasVisible;
+                } else return;
+            }
+
+            wasVisible = visible;
+
+            const { endCoordinates, isEventFromThisApp, duration } = event;
+            if (Platform.OS === 'ios' && !isEventFromThisApp) return;
+
+            const kh = visible ? endCoordinates.height : 0;
+            const newHeight = Math.max(0, instantDoHeight.current ? instantDoHeight.current(kh) : kh);
+            const newDuration = (Math.abs(height._value - newHeight) * duration) / endCoordinates.height;
+
+            Animated.timing(height, {
+                duration: newDuration,
+                toValue: newHeight,
+                useNativeDriver: false
+            }).start();
+        }
+
+        const initialMetric = Keyboard.metrics();
+        if (initialMetric) updateKeyboardHeight(initialMetric, true);
+
+        const frameListener = Keyboard.addListener('keyboardDidChangeFrame', e => updateKeyboardHeight(e));
+        const showListener = Keyboard.addListener(
+            Platform.OS === 'android' ? 'keyboardDidShow' : 'keyboardWillShow',
+            e => updateKeyboardHeight(e, true)
+        );
+        const hiddenListener = Keyboard.addListener(
+            Platform.OS === 'android' ? 'keyboardDidHide' : 'keyboardWillHide',
+            e => updateKeyboardHeight(e, false)
+        );
+
+        return () => {
+            frameListener.remove();
+            showListener.remove();
+            hiddenListener.remove();
+        }
+    }, []);
+
+    return <Animated.View style={{ height }} />;
+}

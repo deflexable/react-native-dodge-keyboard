@@ -105,3 +105,9 @@ export function ReactHijacker(props: ReactHijackerProps): React.ReactElement | n
 
 export function isDodgeScrollable(element: React.ReactNode, disableTagCheck?: boolean): boolean;
 export function isDodgeInput(element: React.ReactNode, disableTagCheck?: boolean): boolean;
+
+interface KeyboardPlaceholderProps {
+    doHeight: (keyboardheight: number) => number;
+}
+
+export function KeyboardPlaceholderView(props: KeyboardPlaceholderProps): React.ReactElement | null;
