@@ -180,161 +180,158 @@ export default function ({ children, offset = 10, disabled, onHandleDodging, dis
         }
     }, [!disabled]);
 
-    return (
-        <ReactHijacker
-            doHijack={(node, path) => {
-                if (node?.props?.['dodge_keyboard_scan_off']) return { element: node };
+    const nodeIdIte = useRef(0);
 
-                const isStandalone = isDodgeInput(node);
+    const onHijackNode = node => {
+        if (node?.props?.dodge_keyboard_scan_off || node?.props?.__dodging_keyboard) return;
 
-                if (isStandalone || isDodgeScrollable(node, disableTagCheck)) {
-                    const scrollId = path.join('=>');
-                    const initNode = () => {
-                        if (!viewRefsMap.current[scrollId])
-                            viewRefsMap.current[scrollId] = { inputRef: {} };
+        const isStandalone = isDodgeInput(node);
+        if (!isStandalone && !isDodgeScrollable(node, disableTagCheck)) return;
 
-                        if (isStandalone) {
-                            viewRefsMap.current[scrollId].__is_standalone = true;
-                            viewRefsMap.current[scrollId]._standalone_props = {
-                                dodge_keyboard_offset: node.props?.dodge_keyboard_offset,
-                                dodge_keyboard_lift: node.props?.dodge_keyboard_lift
-                            };
-                        }
-                    }
-                    const shouldPad = !isStandalone && scrollId === paddedId;
-                    const contentStyle = shouldPad && StyleSheet.flatten(node.props?.contentContainerStyle);
-                    const rootRenderItem = node.prop?.renderItem;
-                    const rootKeyExtractor = node.prop?.keyExtractor;
-                    const hasInternalList = !isStandalone && (typeof rootRenderItem === 'function' && !node.props?.children);
+        const renderer = () => {
+            const scrollId = useMemo(() => `${++nodeIdIte.current}`, []);
 
-                    const doRefCleanup = () => {
-                        if (
-                            viewRefsMap.current[scrollId]?.scrollRef ||
-                            Object.keys(viewRefsMap.current[scrollId]?.inputRef || {}).length
-                        ) return;
-                        delete viewRefsMap.current[scrollId];
-                    }
+            const initNode = () => {
+                if (!viewRefsMap.current[scrollId])
+                    viewRefsMap.current[scrollId] = { inputRef: {} };
 
-                    const injectChild = (children, childPath) =>
-                        ReactHijacker({
-                            children,
-                            path: childPath,
-                            doHijack: (inputNode, path) => {
-                                if (isDodgeInput(inputNode, disableTagCheck)) {
-                                    const inputId = path.join('=>');
-                                    const initInputNode = () => {
-                                        initNode();
-                                        if (!viewRefsMap.current[scrollId].inputRef[inputId])
-                                            viewRefsMap.current[scrollId].inputRef[inputId] = {};
-                                        viewRefsMap.current[scrollId].inputRef[inputId].props = {
-                                            dodge_keyboard_offset: inputNode.props?.dodge_keyboard_offset,
-                                            dodge_keyboard_lift: inputNode.props?.dodge_keyboard_lift
-                                        };
-                                    }
-
-                                    initInputNode();
-
-                                    return {
-                                        props: {
-                                            ...inputNode.props,
-                                            onFocus: (...args) => {
-                                                doDodgeKeyboard.current();
-                                                return inputNode.props?.onFocus?.(...args);
-                                            },
-                                            onLayout: (...args) => {
-                                                doDodgeKeyboard.current();
-                                                return inputNode.props?.onLayout?.(...args);
-                                            },
-                                            ref: r => {
-                                                if (r) {
-                                                    initInputNode();
-
-                                                    viewRefsMap.current[scrollId].inputRef[inputId].ref = r;
-                                                } else if (viewRefsMap.current[scrollId]?.inputRef?.[inputId]) {
-                                                    delete viewRefsMap.current[scrollId].inputRef[inputId];
-                                                    doRefCleanup();
-                                                }
-
-                                                const thatRef = inputNode.props?.ref;
-                                                if (typeof thatRef === 'function') {
-                                                    thatRef(r);
-                                                } else if (thatRef) thatRef.current = r;
-                                            }
-                                        }
-                                    };
-                                }
-                            }
-                        });
-
-                    const extractedKeysMap = [];
-
-                    return {
-                        props: {
-                            ...node.props,
-                            ...shouldPad ? {
-                                contentContainerStyle: {
-                                    ...contentStyle,
-                                    paddingBottom: paddedSize + (isNumber(contentStyle?.paddingBottom) ? contentStyle.paddingBottom : 0)
-                                }
-                            } : {},
-                            ref: r => {
-                                if (r) {
-                                    initNode();
-                                    viewRefsMap.current[scrollId].scrollRef = r;
-                                } else if (viewRefsMap.current[scrollId]) {
-                                    viewRefsMap.current[scrollId].scrollRef = undefined;
-                                    doRefCleanup();
-                                }
-
-                                const thatRef = node.props?.ref;
-                                if (typeof thatRef === 'function') {
-                                    thatRef(r);
-                                } else if (thatRef) thatRef.current = r;
-                            },
-                            ...isStandalone ? {
-                                onFocus: (...args) => {
-                                    doDodgeKeyboard.current();
-                                    return node.props?.onFocus?.(...args);
-                                }
-                            } : {},
-                            onLayout: (...args) => {
-                                doDodgeKeyboard.current();
-                                return node.props?.onLayout?.(...args);
-                            },
-                            ...isStandalone ? {} :
-                                hasInternalList ? {
-                                    ...typeof node.prop?.keyExtractor === 'function' ?
-                                        {
-                                            keyExtractor: (...args) => {
-                                                const res = node.prop.keyExtractor(...args);
-                                                extractedKeysMap[args[1]] = res;
-                                                return res;
-                                            }
-                                        } : {},
-                                    renderItem: (...args) => {
-                                        const { item, index } = args[0] || {};
-                                        const childNode = rootRenderItem(...args);
-                                        let isUnique;
-
-                                        const extractedKey = extractedKeysMap[index];
-
-                                        if (isSomething(extractedKey)) {
-                                            isUnique = extractedKeysMap.findIndex(v => isKeyEqual(v, extractedKey)) === index;
-                                        } else {
-                                            const nodeKey = isSomething(childNode?.key) ? childNode.key : item.key;
-                                            isUnique = isSomething(nodeKey) && !extractedKeysMap.some(v => isKeyEqual(v, nodeKey));
-                                        }
-
-                                        return injectChild(
-                                            childNode,
-                                            [...path, ...isUnique ? [] : [index]]
-                                        );
-                                    }
-                                } : { children: injectChild(node.props?.children, path) }
-                        }
+                if (isStandalone) {
+                    viewRefsMap.current[scrollId].__is_standalone = true;
+                    viewRefsMap.current[scrollId]._standalone_props = {
+                        dodge_keyboard_offset: node.props?.dodge_keyboard_offset,
+                        dodge_keyboard_lift: node.props?.dodge_keyboard_lift
                     };
                 }
-            }}>
+            }
+            const shouldPad = !isStandalone && scrollId === paddedId;
+            const contentStyle = shouldPad && StyleSheet.flatten(node.props?.contentContainerStyle);
+            const rootRenderItem = node.props?.renderItem;
+            const hasInternalList = !isStandalone && (typeof rootRenderItem === 'function' && !node.props?.children);
+
+            const doRefCleanup = () => {
+                if (
+                    viewRefsMap.current[scrollId]?.scrollRef ||
+                    Object.keys(viewRefsMap.current[scrollId]?.inputRef || {}).length
+                ) return;
+                delete viewRefsMap.current[scrollId];
+            }
+
+            const injectChild = (children, childPath) =>
+                ReactHijacker({
+                    children,
+                    path: childPath,
+                    doHijack: inputNode => {
+                        if (node?.props?.__dodging_keyboard) return;
+
+                        if (!isDodgeInput(inputNode, disableTagCheck)) return;
+
+                        const inputRenderer = () => {
+                            const inputId = useMemo(() => `${++nodeIdIte.current}`, []);
+                            const initInputNode = () => {
+                                initNode();
+                                if (!viewRefsMap.current[scrollId].inputRef[inputId])
+                                    viewRefsMap.current[scrollId].inputRef[inputId] = {};
+                                viewRefsMap.current[scrollId].inputRef[inputId].props = {
+                                    dodge_keyboard_offset: inputNode.props?.dodge_keyboard_offset,
+                                    dodge_keyboard_lift: inputNode.props?.dodge_keyboard_lift
+                                };
+                            }
+
+                            initInputNode();
+
+                            const newProps = {
+                                ...inputNode.props,
+                                __dodging_keyboard: true,
+                                onFocus: (...args) => {
+                                    doDodgeKeyboard.current();
+                                    return inputNode.props?.onFocus?.(...args);
+                                },
+                                onLayout: (...args) => {
+                                    doDodgeKeyboard.current();
+                                    return inputNode.props?.onLayout?.(...args);
+                                },
+                                ref: r => {
+                                    if (r) {
+                                        initInputNode();
+
+                                        viewRefsMap.current[scrollId].inputRef[inputId].ref = r;
+                                    } else if (viewRefsMap.current[scrollId]?.inputRef?.[inputId]) {
+                                        delete viewRefsMap.current[scrollId].inputRef[inputId];
+                                        doRefCleanup();
+                                    }
+
+                                    const thatRef = inputNode.props?.ref;
+                                    if (typeof thatRef === 'function') {
+                                        thatRef(r);
+                                    } else if (thatRef) thatRef.current = r;
+                                }
+                            };
+
+                            return cloneElement(inputNode, newProps);
+                        }
+
+                        return createHijackedElement(
+                            <__HijackNode>
+                                {inputRenderer}
+                            </__HijackNode>
+                        );
+                    }
+                });
+
+            const newProps = {
+                ...node.props,
+                __dodging_keyboard: true,
+                ...shouldPad ? {
+                    contentContainerStyle: {
+                        ...contentStyle,
+                        paddingBottom: paddedSize + (isNumber(contentStyle?.paddingBottom) ? contentStyle.paddingBottom : 0)
+                    }
+                } : {},
+                ref: r => {
+                    if (r) {
+                        initNode();
+                        viewRefsMap.current[scrollId].scrollRef = r;
+                    } else if (viewRefsMap.current[scrollId]) {
+                        viewRefsMap.current[scrollId].scrollRef = undefined;
+                        doRefCleanup();
+                    }
+
+                    const thatRef = node.props?.ref;
+                    if (typeof thatRef === 'function') {
+                        thatRef(r);
+                    } else if (thatRef) thatRef.current = r;
+                },
+                ...isStandalone ? {
+                    onFocus: (...args) => {
+                        doDodgeKeyboard.current();
+                        return node.props?.onFocus?.(...args);
+                    }
+                } : {},
+                onLayout: (...args) => {
+                    doDodgeKeyboard.current();
+                    return node.props?.onLayout?.(...args);
+                },
+                ...isStandalone ? {} :
+                    hasInternalList ? {
+                        renderItem: (...args) => {
+                            return injectChild(rootRenderItem(...args));
+                        }
+                    } : { children: injectChild(node.props?.children) }
+            };
+
+            return cloneElement(node, newProps);
+        }
+
+        return createHijackedElement(
+            <__HijackNode>
+                {renderer}
+            </__HijackNode>
+        );
+    };
+
+    return (
+        <ReactHijacker
+            doHijack={onHijackNode}>
             {children}
         </ReactHijacker>
     );
@@ -351,49 +348,38 @@ const niceFunction = (func, message) => {
 }
 
 const isNumber = t => typeof t === 'number' && !isNaN(t) && Number.isFinite(t);
-const isSomething = v => ![undefined, null].includes(v);
-const isKeyEqual = (a, b) => isSomething(a) && isSomething(b) && String(a) === String(b);
 
 const REACT_SYMBOLS = {
     forwardRef: Symbol.for('react.forward_ref'),
     memo: Symbol.for('react.memo')
 };
 
-export function ReactHijacker({ children, doHijack, path }) {
+export function ReactHijacker({ children, doHijack, enableLocator }) {
     const instantDoHijack = useRef();
     instantDoHijack.current = doHijack;
 
-    const injectIntoTree = (node, path = [], handledNodePath) => {
+    const injectIntoTree = (node, path) => {
         if (!node) return node;
         if (Array.isArray(node)) {
-            path = [...path, ...handledNodePath ? [] : [0]];
-            return Children.map(node, (v, i) => {
-                const isUnique = isSomething(v?.key) && node.findIndex(b => isKeyEqual(b?.key, v?.key)) === i;
-
-                return injectIntoTree(v, [...path, ...isUnique ? [] : [i]], true);
-            });
+            return Children.map(node, (v, i) => injectIntoTree(v, path && [...path, i]));
         }
         if (!isValidElement(node)) return node;
 
-        path = [...path, ...(handledNodePath || isSomething(node.key)) ? [] : [0], getNodeId(node)];
+        if (path) path = [...path, getNodeId(node)];
 
         let thisObj;
-        if (thisObj = instantDoHijack.current?.(node, path)) {
-            const { element, props } = thisObj;
-
-            if (Object.hasOwn(thisObj, 'element')) return element;
-            if (props) return cloneElement(node, props);
-            return node;
+        if (Object.hasOwn((thisObj = instantDoHijack.current?.(node, path)) || {}, '__element')) {
+            return thisObj.__element;
         }
 
         if (!isHostElement(node)) {
             const wrapNodeType = (nodeType, pathway, pathKey) => {
-                pathway = [...pathway, getNodeId(undefined, nodeType, pathKey)];
+                if (pathway) pathway = [...pathway, getNodeId(undefined, nodeType, pathKey)];
 
                 // if (doLogging) console.log('wrapNodeType path:', pathway, ' node:', nodeType);
                 const render = (renderedNode) => {
                     // if (doLogging) console.log('deep path:', pathway, ' node:', renderedNode);
-                    return injectIntoTree(renderedNode, pathway);
+                    return injectIntoTree(renderedNode, pathway && [...pathway, 0]);
                 }
 
                 if (typeof nodeType === 'function') { // check self closed tag
@@ -417,7 +403,10 @@ export function ReactHijacker({ children, doHijack, path }) {
                 return (
                     <__HijackNodePath>
                         {() => {
-                            const hijackType = useMemo(() => wrapNodeType(node.type, path.slice(0, -1), node.key), [node.type]);
+                            const hijackType = useMemo(() =>
+                                wrapNodeType(node.type, path && path.slice(0, -1), node.key),
+                                [node.type]
+                            );
 
                             return createElement(
                                 hijackType,
@@ -436,19 +425,23 @@ export function ReactHijacker({ children, doHijack, path }) {
         const children = node.props?.children;
         if (children)
             return cloneElement(node, {
-                children: injectIntoTree(children, path)
+                children: injectIntoTree(children, path && [...path, 0])
             });
 
         return node;
     };
 
-    return injectIntoTree(children, path);
+    return injectIntoTree(children, enableLocator ? [] : undefined);
 };
+
+export const createHijackedElement = (element) => ({ __element: element });
+export function __HijackNode({ children }) {
+    return children?.();
+}
 
 function __HijackNodePath({ children }) {
     return children?.();
 }
-__HijackNodePath.displayName = '__HijackNodePath';
 
 const hijackRender = (type, doHijack) =>
     new Proxy(type, {

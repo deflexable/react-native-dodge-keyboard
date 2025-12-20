@@ -97,11 +97,14 @@ interface doHijackResult {
 
 interface ReactHijackerProps {
     doHijack: (node: React.ReactNode, path: Array<any> | undefined) => doHijackResult,
-    path?: Array<any> | undefined;
+    enableLocator?: boolean | undefined;
     children?: React.ReactNode;
 }
 
 export function ReactHijacker(props: ReactHijackerProps): React.ReactElement | null;
+export function __HijackNode(props: { children: () => React.ReactElement | null }): React.ReactElement | null;
+
+export function createHijackedElement(element?: React.ReactElement | null): { __element: React.ReactElement | null };
 
 export function isDodgeScrollable(element: React.ReactNode, disableTagCheck?: boolean): boolean;
 export function isDodgeInput(element: React.ReactNode, disableTagCheck?: boolean): boolean;
