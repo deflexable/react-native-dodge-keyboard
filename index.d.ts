@@ -63,12 +63,15 @@ export interface DodgeKeyboardProps {
     /**
      * an handler used internally for checking if a view is focused
      * 
+     * @param {View} ref - the reference of the view to check if it is currently focused
+     * @param {View} refList - list of all views references that were marked as `focusable`
+     * 
      * @default 
      * ```js
      *  r => r?.isFocused?.()
      * ```
      */
-    checkIfElementIsFocused?: (ref: View) => boolean;
+    checkIfElementIsFocused?: (ref: View, refList: View[]) => boolean;
 
     /**
      * Child element(s) wrapped by the dodge container.

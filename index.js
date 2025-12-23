@@ -7,7 +7,7 @@ export default function ({ children, offset = 10, disabled, onHandleDodging, dis
             throw 'checkIfElementIsFocused should be a function';
 
         checkIfElementIsFocused = niceFunction(checkIfElementIsFocused, 'checkIfElementIsFocused');
-    } else checkIfElementIsFocused = r => r?.isFocused?.();
+    }
 
     if (onHandleDodging !== undefined) {
         if (typeof onHandleDodging !== 'function')
@@ -27,11 +27,17 @@ export default function ({ children, offset = 10, disabled, onHandleDodging, dis
     const doDodgeKeyboard = useRef();
     const previousLift = useRef();
     const wasVisible = useRef();
+    const pendingIdleTask = useRef();
+    const lastKeyboardEvent = useRef();
 
     const clearPreviousDodge = (scrollId) => {
         if (previousLift.current && previousLift.current !== scrollId) {
             const viewRef = viewRefsMap.current[previousLift.current]?.scrollRef;
-            onHandleDodging?.({ liftUp: 0, viewRef: viewRef || null });
+            onHandleDodging?.({
+                liftUp: 0,
+                viewRef: viewRef || null,
+                keyboardEvent: lastKeyboardEvent.current
+            });
             previousLift.current = undefined;
         }
     }
@@ -39,8 +45,11 @@ export default function ({ children, offset = 10, disabled, onHandleDodging, dis
     /**
      * @param {import('react-native').KeyboardEvent | undefined} event 
      * @param {boolean} visible
+     * @param {boolean} fromIdle
      */
-    doDodgeKeyboard.current = (event, visible) => {
+    doDodgeKeyboard.current = (event, visible, fromIdle) => {
+        if (Platform.OS === 'ios' && event && !event?.isEventFromThisApp) return;
+
         if (typeof visible !== 'boolean') {
             if (typeof wasVisible.current === 'boolean') {
                 visible = wasVisible.current;
@@ -48,79 +57,123 @@ export default function ({ children, offset = 10, disabled, onHandleDodging, dis
         }
 
         wasVisible.current = visible;
+        if (event) lastKeyboardEvent.current = event;
 
         try {
             const keyboardInfo = event?.endCoordinates || Keyboard.metrics();
-            const { width: windowWidth, height: windowHeight } = Dimensions.get('window');
 
             // console.log('doDodgeKeyboard');
+
+            if (pendingIdleTask.current !== undefined)
+                cancelIdleCallback(pendingIdleTask.current);
+            pendingIdleTask.current = undefined;
+
             if (
                 visible &&
                 keyboardInfo &&
                 !disabled &&
-                (keyboardInfo.width === windowWidth ||
-                    keyboardInfo.height + keyboardInfo.screenY === windowHeight) &&
+                (!isOffScreenY(keyboardInfo) && !isOffScreenX(keyboardInfo)) &&
                 keyboardInfo.screenY
             ) {
                 // console.log('doDodgeKeyboard 1 entries:', Object.keys(viewRefsMap.current).length);
-                for (const [scrollId, obj] of Object.entries(viewRefsMap.current)) {
+                const itemIteList = Object.entries(viewRefsMap.current);
+                const allInputList = checkIfElementIsFocused && itemIteList.map(v =>
+                    v[1].__is_standalone
+                        ? [v[1].scrollRef]
+                        : Object.values(v[1].inputRef).map(v => v.ref)
+                ).flat();
+
+                const initIdleTask = () => {
+                    if (!fromIdle)
+                        pendingIdleTask.current = requestIdleCallback(() => {
+                            doDodgeKeyboard.current(undefined, undefined, true);
+                        });
+                }
+
+                const checkFocused = checkIfElementIsFocused || (r => r?.isFocused?.());
+
+                for (const [scrollId, obj] of itemIteList) {
                     const { scrollRef, inputRef, __is_standalone, _standalone_props } = obj;
                     if (scrollRef) {
                         if (__is_standalone) {
-                            if (checkIfElementIsFocused(scrollRef)) {
-                                if (scrollRef.measureInWindow)
-                                    UIManager.measureInWindow(findNodeHandle(scrollRef), (x, y, w, h) => {
-                                        const { dodge_keyboard_offset } = _standalone_props || {};
-                                        const thisOffset = isNumber(dodge_keyboard_offset) ? dodge_keyboard_offset : offset;
+                            if (checkFocused(scrollRef, allInputList)) {
+                                UIManager.measure(findNodeHandle(scrollRef), (_x, _y, w, h, x, y) => {
+                                    const { dodge_keyboard_offset } = _standalone_props || {};
+                                    const thisOffset = isNumber(dodge_keyboard_offset) ? dodge_keyboard_offset : offset;
 
-                                        const liftUp = Math.max(0, (y - keyboardInfo.screenY) + Math.min(h + thisOffset, keyboardInfo.screenY));
-                                        clearPreviousDodge(scrollId);
-                                        if (liftUp) {
-                                            previousLift.current = scrollId;
-                                            onHandleDodging?.({ liftUp, viewRef: scrollRef });
-                                        }
-                                    });
+                                    const liftUp = Math.max(0, (y - keyboardInfo.screenY) + Math.min(h + thisOffset, keyboardInfo.screenY));
+                                    clearPreviousDodge(scrollId);
+                                    if (liftUp) {
+                                        previousLift.current = scrollId;
+                                        onHandleDodging?.({
+                                            liftUp,
+                                            viewRef: scrollRef,
+                                            keyboardEvent: lastKeyboardEvent.current
+                                        });
+                                    }
+                                    initIdleTask();
+                                });
                                 return;
                             }
                         } else {
                             for (const { ref: inputObj, props } of Object.values(inputRef)) {
-                                if (checkIfElementIsFocused(inputObj)) {
-                                    UIManager.measureInWindow(findNodeHandle(scrollRef), ((sx, sy, sw, sh) => {
-                                        inputObj.measureInWindow((x, y) => { // y is dynamic
-                                            inputObj.measureLayout(scrollRef, (l, t, w, h) => { // t is fixed
-                                                const { dodge_keyboard_offset } = props || {};
-                                                const thisOffset = isNumber(dodge_keyboard_offset) ? dodge_keyboard_offset : offset;
-
-                                                const scrollInputY = y - sy;
-
-                                                if (scrollInputY >= 0 && scrollInputY <= sh) { // is input visible in viewport
-                                                    const clampedLift = Math.min(h + thisOffset, keyboardInfo.screenY);
-
-                                                    if (y + clampedLift >= keyboardInfo.screenY) { // is below keyboard
-                                                        const requiredScrollY = (t - (keyboardInfo.screenY - sy)) + clampedLift;
-                                                        // for lifting up the scroll-view
-                                                        const liftUp = Math.max(0, requiredScrollY - t);
-                                                        clearPreviousDodge(scrollId);
-                                                        if (liftUp) {
-                                                            previousLift.current = scrollId;
-                                                            onHandleDodging?.({ liftUp, viewRef: scrollRef });
-                                                        }
-
-                                                        const scrollLift = Math.max(0, (sy + sh + (thisOffset >= 0 ? thisOffset : 0)) - keyboardInfo.screenY);
-                                                        const newScrollY = Math.min(requiredScrollY, t);
-
-                                                        // console.log('scrolling-to:', requiredScrollY, ' scrollLift:', scrollLift);
-                                                        if (scrollLift) {
-                                                            setCurrentPaddedScroller([scrollId, scrollLift, newScrollY]);
-                                                        } else {
-                                                            tryPerformScroll(scrollRef, newScrollY, true);
-                                                            setCurrentPaddedScroller();
-                                                        }
-                                                    }
-                                                }
+                                if (checkFocused(inputObj, allInputList)) {
+                                    Promise.all([
+                                        new Promise(resolve => {
+                                            UIManager.measure(findNodeHandle(scrollRef), (x, y, w, h, px, py) => {
+                                                resolve({ h, py });
                                             });
-                                        });
-                                    }));
+                                        }),
+                                        new Promise(resolve => {
+                                            inputObj.measure((x, y, w, h, px, py) => { // y is dynamic
+                                                resolve({ py });
+                                            });
+                                        }),
+                                        new Promise((resolve, reject) => {
+                                            inputObj.measureLayout(scrollRef, (l, t, w, h) => { // t is fixed
+                                                resolve({ t, h })
+                                            }, reject);
+                                        })
+                                    ]).then(([{ h: sh, py: sy }, { py: y }, { t, h }]) => {
+
+                                        const { dodge_keyboard_offset } = props || {};
+                                        const thisOffset = isNumber(dodge_keyboard_offset) ? dodge_keyboard_offset : offset;
+
+                                        const scrollInputY = y - sy;
+
+                                        if (scrollInputY >= 0 && scrollInputY <= sh) { // is input visible in viewport
+                                            const clampedLift = Math.min(h + thisOffset, keyboardInfo.screenY);
+
+                                            if (y + clampedLift >= keyboardInfo.screenY) { // is below keyboard
+                                                const requiredScrollY = (t - (keyboardInfo.screenY - sy)) + clampedLift;
+                                                // for lifting up the scroll-view
+                                                const liftUp = Math.max(0, requiredScrollY - t);
+                                                clearPreviousDodge(scrollId);
+                                                if (liftUp) {
+                                                    previousLift.current = scrollId;
+                                                    onHandleDodging?.({
+                                                        liftUp,
+                                                        viewRef: scrollRef,
+                                                        keyboardEvent: lastKeyboardEvent.current
+                                                    });
+                                                }
+
+                                                const scrollLift = Math.max(0, (sy + sh + (thisOffset >= 0 ? thisOffset : 0)) - keyboardInfo.screenY);
+                                                const newScrollY = Math.min(requiredScrollY, t);
+
+                                                // console.log('scrolling-to:', requiredScrollY, ' scrollLift:', scrollLift);
+                                                if (scrollLift) {
+                                                    setCurrentPaddedScroller([scrollId, scrollLift, newScrollY]);
+                                                } else {
+                                                    tryPerformScroll(scrollRef, newScrollY, true);
+                                                    setCurrentPaddedScroller();
+                                                }
+                                                initIdleTask();
+                                            }
+                                        }
+                                    }).catch(e => {
+                                        console.error('frame calculation error:', e);
+                                    });
                                     return;
                                 }
                             }
@@ -183,7 +236,7 @@ export default function ({ children, offset = 10, disabled, onHandleDodging, dis
     const nodeIdIte = useRef(0);
 
     const onHijackNode = node => {
-        if (node?.props?.dodge_keyboard_scan_off || node?.props?.__dodging_keyboard) return;
+        if (offDodgeScan(node)) return createHijackedElement(node);
 
         const isStandalone = isDodgeInput(node);
         if (!isStandalone && !isDodgeScrollable(node, disableTagCheck)) return;
@@ -216,67 +269,62 @@ export default function ({ children, offset = 10, disabled, onHandleDodging, dis
                 delete viewRefsMap.current[scrollId];
             }
 
-            const injectChild = (children, childPath) =>
-                ReactHijacker({
-                    children,
-                    path: childPath,
-                    doHijack: inputNode => {
-                        if (node?.props?.__dodging_keyboard) return;
+            const injectChild = inputNode => {
+                if (offDodgeScan(inputNode)) return createHijackedElement(inputNode);
 
-                        if (!isDodgeInput(inputNode, disableTagCheck)) return;
+                if (!isDodgeInput(inputNode, disableTagCheck)) return;
 
-                        const inputRenderer = () => {
-                            const inputId = useMemo(() => `${++nodeIdIte.current}`, []);
-                            const initInputNode = () => {
-                                initNode();
-                                if (!viewRefsMap.current[scrollId].inputRef[inputId])
-                                    viewRefsMap.current[scrollId].inputRef[inputId] = {};
-                                viewRefsMap.current[scrollId].inputRef[inputId].props = {
-                                    dodge_keyboard_offset: inputNode.props?.dodge_keyboard_offset,
-                                    dodge_keyboard_lift: inputNode.props?.dodge_keyboard_lift
-                                };
+                const inputRenderer = () => {
+                    const inputId = useMemo(() => `${++nodeIdIte.current}`, []);
+                    const initInputNode = () => {
+                        initNode();
+                        if (!viewRefsMap.current[scrollId].inputRef[inputId])
+                            viewRefsMap.current[scrollId].inputRef[inputId] = {};
+                        viewRefsMap.current[scrollId].inputRef[inputId].props = {
+                            dodge_keyboard_offset: inputNode.props?.dodge_keyboard_offset,
+                            dodge_keyboard_lift: inputNode.props?.dodge_keyboard_lift
+                        };
+                    }
+
+                    initInputNode();
+
+                    const newProps = {
+                        ...inputNode.props,
+                        __dodging_keyboard: true,
+                        onFocus: (...args) => {
+                            doDodgeKeyboard.current();
+                            return inputNode.props?.onFocus?.(...args);
+                        },
+                        onLayout: (...args) => {
+                            doDodgeKeyboard.current();
+                            return inputNode.props?.onLayout?.(...args);
+                        },
+                        ref: r => {
+                            if (r) {
+                                initInputNode();
+
+                                viewRefsMap.current[scrollId].inputRef[inputId].ref = r;
+                            } else if (viewRefsMap.current[scrollId]?.inputRef?.[inputId]) {
+                                delete viewRefsMap.current[scrollId].inputRef[inputId];
+                                doRefCleanup();
                             }
 
-                            initInputNode();
-
-                            const newProps = {
-                                ...inputNode.props,
-                                __dodging_keyboard: true,
-                                onFocus: (...args) => {
-                                    doDodgeKeyboard.current();
-                                    return inputNode.props?.onFocus?.(...args);
-                                },
-                                onLayout: (...args) => {
-                                    doDodgeKeyboard.current();
-                                    return inputNode.props?.onLayout?.(...args);
-                                },
-                                ref: r => {
-                                    if (r) {
-                                        initInputNode();
-
-                                        viewRefsMap.current[scrollId].inputRef[inputId].ref = r;
-                                    } else if (viewRefsMap.current[scrollId]?.inputRef?.[inputId]) {
-                                        delete viewRefsMap.current[scrollId].inputRef[inputId];
-                                        doRefCleanup();
-                                    }
-
-                                    const thatRef = inputNode.props?.ref;
-                                    if (typeof thatRef === 'function') {
-                                        thatRef(r);
-                                    } else if (thatRef) thatRef.current = r;
-                                }
-                            };
-
-                            return cloneElement(inputNode, newProps);
+                            const thatRef = inputNode.props?.ref;
+                            if (typeof thatRef === 'function') {
+                                thatRef(r);
+                            } else if (thatRef) thatRef.current = r;
                         }
+                    };
 
-                        return createHijackedElement(
-                            <__HijackNode>
-                                {inputRenderer}
-                            </__HijackNode>
-                        );
-                    }
-                });
+                    return cloneElement(inputNode, newProps);
+                }
+
+                return createHijackedElement(
+                    <__HijackNode>
+                        {inputRenderer}
+                    </__HijackNode>
+                );
+            }
 
             const newProps = {
                 ...node.props,
@@ -314,9 +362,20 @@ export default function ({ children, offset = 10, disabled, onHandleDodging, dis
                 ...isStandalone ? {} :
                     hasInternalList ? {
                         renderItem: (...args) => {
-                            return injectChild(rootRenderItem(...args));
+                            return (
+                                <ReactHijacker
+                                    doHijack={injectChild}>
+                                    {rootRenderItem(...args)}
+                                </ReactHijacker>
+                            );
                         }
-                    } : { children: injectChild(node.props?.children) }
+                    } : {
+                        children:
+                            ReactHijacker({
+                                children: node.props?.children,
+                                doHijack: injectChild
+                            })
+                    }
             };
 
             return cloneElement(node, newProps);
@@ -498,6 +557,8 @@ export function isHostElement(node) {
     );
 }
 
+const offDodgeScan = (node) => node?.props?.dodge_keyboard_scan_off || node?.props?.__dodging_keyboard;
+
 export const isDodgeScrollable = (element, disableTagCheck) => {
     if (element?.props?.['dodge_keyboard_scrollable']) return true;
     if (!element?.type || element?.props?.horizontal || disableTagCheck) return false;
@@ -517,6 +578,19 @@ export const isDodgeInput = (element, disableTagCheck) => {
     return inputTypes.includes(element.type?.displayName)
         || inputTypes.includes(element.type?.name);
 };
+
+const isOffScreenY = (keyboardInfo, minimumThreshold = .27) =>
+    !keyboardInfo ||
+    keyboardInfo.height <= 0 ||
+    ((keyboardInfo.screenY / (keyboardInfo.screenY + keyboardInfo.height)) < .40) ||
+    (keyboardInfo.screenY / Dimensions.get('window').height) < minimumThreshold;
+
+const isOffScreenX = (keyboardInfo, minimumThreshold = .7) => {
+    const vw = Dimensions.get('window').width;
+
+    return !keyboardInfo ||
+        (Math.min(keyboardInfo.width, vw) / Math.max(keyboardInfo.width, vw)) < minimumThreshold;
+}
 
 export const KeyboardPlaceholderView = ({ doHeight }) => {
     const height = useAnimatedValue(0);
@@ -542,19 +616,27 @@ export const KeyboardPlaceholderView = ({ doHeight }) => {
             const { endCoordinates, isEventFromThisApp, duration } = event;
             if (Platform.OS === 'ios' && !isEventFromThisApp) return;
 
-            const kh = visible ? endCoordinates.height : 0;
+            const kh = (visible && !isOffScreenX(endCoordinates) && !isOffScreenY(endCoordinates, .3))
+                ? Math.max(Dimensions.get('window').height - endCoordinates.screenY, 0)
+                : 0;
+
             const newHeight = Math.max(0, instantDoHeight.current ? instantDoHeight.current(kh) : kh);
-            const newDuration = (Math.abs(height._value - newHeight) * duration) / endCoordinates.height;
+            const newDuration = (Math.abs(height._value - newHeight) * duration) / Math.max(0, endCoordinates.height);
 
             Animated.timing(height, {
-                duration: newDuration,
+                duration: newDuration || 0,
                 toValue: newHeight,
                 useNativeDriver: false
             }).start();
         }
 
         const initialMetric = Keyboard.metrics();
-        if (initialMetric) updateKeyboardHeight(initialMetric, true);
+        if (initialMetric)
+            updateKeyboardHeight({
+                endCoordinates: initialMetric,
+                isEventFromThisApp: true,
+                duration: 0
+            }, true);
 
         const frameListener = Keyboard.addListener('keyboardDidChangeFrame', e => updateKeyboardHeight(e));
         const showListener = Keyboard.addListener(
