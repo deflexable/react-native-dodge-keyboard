@@ -28,6 +28,7 @@ export default function ({ children, offset = 10, disabled, onHandleDodging, dis
     const previousLift = useRef();
     const wasVisible = useRef();
     const pendingIdleTask = useRef();
+    const resizerTimer = useRef();
     const lastKeyboardEvent = useRef();
 
     const clearPreviousDodge = (scrollId) => {
@@ -45,9 +46,9 @@ export default function ({ children, offset = 10, disabled, onHandleDodging, dis
     /**
      * @param {import('react-native').KeyboardEvent | undefined} event 
      * @param {boolean} visible
-     * @param {boolean} fromIdle
+     * @param {{ fromIdle?: boolean, fromTimer?: boolean } | undefined} eventContext
      */
-    doDodgeKeyboard.current = (event, visible, fromIdle) => {
+    doDodgeKeyboard.current = (event, visible, eventContext) => {
         if (Platform.OS === 'ios' && event && !event?.isEventFromThisApp) return;
 
         if (typeof visible !== 'boolean') {
@@ -68,6 +69,10 @@ export default function ({ children, offset = 10, disabled, onHandleDodging, dis
                 cancelIdleCallback(pendingIdleTask.current);
             pendingIdleTask.current = undefined;
 
+            if (resizerTimer.current !== undefined)
+                clearTimeout(resizerTimer.current);
+            resizerTimer.current = undefined;
+
             if (
                 visible &&
                 keyboardInfo &&
@@ -84,10 +89,15 @@ export default function ({ children, offset = 10, disabled, onHandleDodging, dis
                 ).flat();
 
                 const initIdleTask = () => {
-                    if (!fromIdle)
+                    if (!eventContext && pendingIdleTask.current === undefined)
                         pendingIdleTask.current = requestIdleCallback(() => {
-                            doDodgeKeyboard.current(undefined, undefined, true);
-                        });
+                            doDodgeKeyboard.current(undefined, undefined, { fromIdle: true });
+                        }, { timeout: 300 });
+
+                    if (!eventContext?.fromTimer && resizerTimer.current === undefined)
+                        resizerTimer.current = setTimeout(() => {
+                            doDodgeKeyboard.current(undefined, undefined, { fromTimer: true });
+                        }, 500);
                 }
 
                 const checkFocused = checkIfElementIsFocused || (r => r?.isFocused?.());
@@ -218,11 +228,19 @@ export default function ({ children, offset = 10, disabled, onHandleDodging, dis
         if (disabled) return;
         const frameListener = Keyboard.addListener('keyboardDidChangeFrame', e => doDodgeKeyboard.current(e));
         const showListener = Keyboard.addListener(
-            Platform.OS === 'android' ? 'keyboardDidShow' : 'keyboardWillShow',
+            'keyboardWillShow',
             e => doDodgeKeyboard.current(e, true)
         );
         const hiddenListener = Keyboard.addListener(
-            Platform.OS === 'android' ? 'keyboardDidHide' : 'keyboardWillHide',
+            'keyboardWillHide',
+            e => doDodgeKeyboard.current(e, false)
+        );
+        const didShowListener = Keyboard.addListener(
+            'keyboardDidShow',
+            e => doDodgeKeyboard.current(e, true)
+        );
+        const didHideListener = Keyboard.addListener(
+            'keyboardDidHide',
             e => doDodgeKeyboard.current(e, false)
         );
 
@@ -230,6 +248,8 @@ export default function ({ children, offset = 10, disabled, onHandleDodging, dis
             frameListener.remove();
             showListener.remove();
             hiddenListener.remove();
+            didShowListener.remove();
+            didHideListener.remove();
         }
     }, [!disabled]);
 
