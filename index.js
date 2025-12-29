@@ -25,21 +25,21 @@ export default function ({ children, offset = 10, disabled, onHandleDodging, dis
      */
     const viewRefsMap = useRef({});
     const doDodgeKeyboard = useRef();
-    const previousLift = useRef();
+    const previousLift = useRef({ scrollId: undefined, lift: undefined });
     const wasVisible = useRef();
     const pendingIdleTask = useRef();
     const resizerTimer = useRef();
     const lastKeyboardEvent = useRef();
 
     const clearPreviousDodge = (scrollId) => {
-        if (previousLift.current && previousLift.current !== scrollId) {
-            const viewRef = viewRefsMap.current[previousLift.current]?.scrollRef;
+        if (previousLift.current.scrollId && previousLift.current.scrollId !== scrollId) {
+            const viewRef = viewRefsMap.current[previousLift.current.scrollId]?.scrollRef;
             onHandleDodging?.({
                 liftUp: 0,
                 viewRef: viewRef || null,
                 keyboardEvent: lastKeyboardEvent.current
             });
-            previousLift.current = undefined;
+            previousLift.current = { scrollId: undefined, lift: undefined };
         }
     }
 
@@ -97,7 +97,7 @@ export default function ({ children, offset = 10, disabled, onHandleDodging, dis
                     if (!eventContext?.fromTimer && resizerTimer.current === undefined)
                         resizerTimer.current = setTimeout(() => {
                             doDodgeKeyboard.current(undefined, undefined, { fromTimer: true });
-                        }, 500);
+                        }, 700);
                 }
 
                 const checkFocused = checkIfElementIsFocused || (r => r?.isFocused?.());
@@ -107,16 +107,17 @@ export default function ({ children, offset = 10, disabled, onHandleDodging, dis
                     if (scrollRef) {
                         if (__is_standalone) {
                             if (checkFocused(scrollRef, allInputList)) {
-                                UIManager.measure(findNodeHandle(scrollRef), (_x, _y, w, h, x, y) => {
-                                    const { dodge_keyboard_offset } = _standalone_props || {};
+                                UIManager.measure(findNodeHandle(scrollRef), (x, y, width, height, pageX, pageY) => {
+                                    const { dodge_keyboard_offset, dodge_keyboard_clipping } = _standalone_props || {};
                                     const thisOffset = isNumber(dodge_keyboard_offset) ? dodge_keyboard_offset : offset;
 
-                                    const liftUp = Math.max(0, (y - keyboardInfo.screenY) + Math.min(h + thisOffset, keyboardInfo.screenY));
+                                    const liftUp = (pageY - keyboardInfo.screenY) + Math.min(height + thisOffset, keyboardInfo.screenY);
                                     clearPreviousDodge(scrollId);
-                                    if (liftUp) {
-                                        previousLift.current = scrollId;
+                                    if (liftUp > 0 || (dodge_keyboard_clipping && liftUp && previousLift.current.lift !== liftUp)) {
+                                        previousLift.current = { scrollId, lift: liftUp };
                                         onHandleDodging?.({
                                             liftUp,
+                                            layout: { x, y, width, height, pageX, pageY },
                                             viewRef: scrollRef,
                                             keyboardEvent: lastKeyboardEvent.current
                                         });
@@ -130,23 +131,27 @@ export default function ({ children, offset = 10, disabled, onHandleDodging, dis
                                 if (checkFocused(inputObj, allInputList)) {
                                     Promise.all([
                                         new Promise(resolve => {
-                                            UIManager.measure(findNodeHandle(scrollRef), (x, y, w, h, px, py) => {
-                                                resolve({ h, py });
+                                            UIManager.measure(findNodeHandle(scrollRef), (x, y, width, height, pageX, pageY) => {
+                                                resolve({
+                                                    h: height,
+                                                    py: pageY,
+                                                    scrollLayout: { x, y, width, height, pageX, pageY }
+                                                });
                                             });
                                         }),
                                         new Promise(resolve => {
-                                            inputObj.measure((x, y, w, h, px, py) => { // y is dynamic
-                                                resolve({ py });
+                                            inputObj.measure((x, y, width, height, pageX, pageY) => { // y is dynamic
+                                                resolve({ py: pageY, layout: { x, y, width, height, pageX, pageY } });
                                             });
                                         }),
                                         new Promise((resolve, reject) => {
-                                            inputObj.measureLayout(scrollRef, (l, t, w, h) => { // t is fixed
-                                                resolve({ t, h })
+                                            inputObj.measureLayout(scrollRef, (l, t, width, height) => { // t is fixed
+                                                resolve({ t, h: height, relativeLayout: { left: l, top: t, width, height } });
                                             }, reject);
                                         })
-                                    ]).then(([{ h: sh, py: sy }, { py: y }, { t, h }]) => {
+                                    ]).then(([{ h: sh, py: sy, scrollLayout }, { py: y, layout }, { t, h, relativeLayout }]) => {
 
-                                        const { dodge_keyboard_offset } = props || {};
+                                        const { dodge_keyboard_offset, dodge_keyboard_clipping } = props || {};
                                         const thisOffset = isNumber(dodge_keyboard_offset) ? dodge_keyboard_offset : offset;
 
                                         const scrollInputY = y - sy;
@@ -159,10 +164,13 @@ export default function ({ children, offset = 10, disabled, onHandleDodging, dis
                                                 // for lifting up the scroll-view
                                                 const liftUp = Math.max(0, requiredScrollY - t);
                                                 clearPreviousDodge(scrollId);
-                                                if (liftUp) {
-                                                    previousLift.current = scrollId;
+                                                if (liftUp > 0 || (dodge_keyboard_clipping && liftUp && previousLift.current.lift !== liftUp)) {
+                                                    previousLift.current = { scrollId, lift: liftUp };
                                                     onHandleDodging?.({
                                                         liftUp,
+                                                        layout,
+                                                        scrollLayout,
+                                                        relativeLayout,
                                                         viewRef: scrollRef,
                                                         keyboardEvent: lastKeyboardEvent.current
                                                     });
@@ -272,7 +280,8 @@ export default function ({ children, offset = 10, disabled, onHandleDodging, dis
                     viewRefsMap.current[scrollId].__is_standalone = true;
                     viewRefsMap.current[scrollId]._standalone_props = {
                         dodge_keyboard_offset: node.props?.dodge_keyboard_offset,
-                        dodge_keyboard_lift: node.props?.dodge_keyboard_lift
+                        dodge_keyboard_lift: node.props?.dodge_keyboard_lift,
+                        dodge_keyboard_clipping: node.props?.dodge_keyboard_clipping
                     };
                 }
             }
@@ -302,7 +311,8 @@ export default function ({ children, offset = 10, disabled, onHandleDodging, dis
                             viewRefsMap.current[scrollId].inputRef[inputId] = {};
                         viewRefsMap.current[scrollId].inputRef[inputId].props = {
                             dodge_keyboard_offset: inputNode.props?.dodge_keyboard_offset,
-                            dodge_keyboard_lift: inputNode.props?.dodge_keyboard_lift
+                            dodge_keyboard_lift: inputNode.props?.dodge_keyboard_lift,
+                            dodge_keyboard_clipping: inputNode.props?.dodge_keyboard_clipping
                         };
                     }
 

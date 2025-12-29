@@ -11,7 +11,7 @@ export interface LiftUpDodge {
     /**
      * A reference to the view that should be lifted.
      * 
-     * null is returned if the view has been recently removed from the node hierarchy
+     * null may be returned if the view has been recently removed from the node hierarchy
      */
     viewRef: ScrollView | View | null;
 }
