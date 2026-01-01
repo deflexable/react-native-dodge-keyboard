@@ -1,7 +1,7 @@
-import { Children, cloneElement, createElement, forwardRef, isValidElement, memo, useEffect, useMemo, useRef, useState } from "react";
+import { Children, cloneElement, createElement, forwardRef, isValidElement, memo, useEffect, useMemo, useRef, useState, useImperativeHandle } from "react";
 import { Animated, Dimensions, findNodeHandle, Keyboard, Platform, StyleSheet, UIManager, useAnimatedValue } from "react-native";
 
-export default function ({ children, offset = 10, disabled, onHandleDodging, disableTagCheck, checkIfElementIsFocused }) {
+const DodgeKeyboard = forwardRef(({ children, offset = 10, disabled, onHandleDodging, disableTagCheck, checkIfElementIsFocused }, ref) => {
     if (checkIfElementIsFocused !== undefined) {
         if (typeof checkIfElementIsFocused !== 'function')
             throw 'checkIfElementIsFocused should be a function';
@@ -97,7 +97,7 @@ export default function ({ children, offset = 10, disabled, onHandleDodging, dis
                     if (!eventContext?.fromTimer && resizerTimer.current === undefined)
                         resizerTimer.current = setTimeout(() => {
                             doDodgeKeyboard.current(undefined, undefined, { fromTimer: true });
-                        }, 700);
+                        }, 500);
                 }
 
                 const checkFocused = checkIfElementIsFocused || (r => r?.isFocused?.());
@@ -224,13 +224,24 @@ export default function ({ children, offset = 10, disabled, onHandleDodging, dis
     useEffect(() => {
         if (currentPaddedScroller) {
             const ref = viewRefsMap.current[paddedId]?.scrollRef;
-            tryPerformScroll(ref, paddedScroll, false);
+            if (Platform.OS === 'android') {
+                tryPerformScroll(ref, paddedScroll, false);
+            } else {
+                // this seem to be removing `the flash bang` on IOS
+                setTimeout(() => {
+                    tryPerformScroll(ref, paddedScroll, false);
+                }, 1);
+            }
         }
     }, [currentPaddedScroller]);
 
     useEffect(() => {
         doDodgeKeyboard.current();
     }, [offset, !disabled]);
+
+    useImperativeHandle(ref, () => ({
+        trigger: () => doDodgeKeyboard.current()
+    }), []);
 
     useEffect(() => {
         if (disabled) return;
@@ -424,7 +435,9 @@ export default function ({ children, offset = 10, disabled, onHandleDodging, dis
             {children}
         </ReactHijacker>
     );
-};
+});
+
+export default DodgeKeyboard;
 
 const niceFunction = (func, message) => {
     return (...args) => {
