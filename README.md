@@ -31,8 +31,8 @@ yarn add react-native-dodge-keyboard
 ## Demo
 
 <p>
-  <img src="https://github.com/deflexable/react-native-dodge-keyboard/blob/main/screenshots/main.gif" width="240">
-  <img src="https://github.com/deflexable/react-native-dodge-keyboard/blob/main/screenshots/android_main.gif" width="240">
+  <img src="https://github.com/deflexable/react-native-dodge-keyboard/blob/main/screenshots/main.gif" width="260">
+  <img src="https://github.com/deflexable/react-native-dodge-keyboard/blob/main/screenshots/android_main.gif" width="260">
 </p>
 
 ## Usage
@@ -60,7 +60,7 @@ export default function TestScreen() {
 
 ## Known Issues
 
-## Android Soft Input
+### Android Soft Input
 Some Android devices handle keyboard dodging natively, which can lead to unexpected behavior when used with this library. To disable the native behavior and avoid issues, set `android:windowSoftInputMode="adjustNothing"` in your AndroidManifest.xml.
 
 ## Advance Use Cases
@@ -74,7 +74,7 @@ Kindly check [examples/CustomFocusDodge.jsx](https://github.com/deflexable/react
 
 A demo of the example is attach below:
 
-<img src="https://github.com/deflexable/react-native-dodge-keyboard/blob/main/screenshots/custom.gif" width="240">
+<img src="https://github.com/deflexable/react-native-dodge-keyboard/blob/main/screenshots/custom.gif" width="260">
 
 
 ### Dodging static element
@@ -84,4 +84,4 @@ Kindly check [examples/ManualLifting.jsx](https://github.com/deflexable/react-na
 
 A demo of the example is attach below:
 
-<img src="https://github.com/deflexable/react-native-dodge-keyboard/blob/main/screenshots/static.gif" width="240">
+<img src="https://github.com/deflexable/react-native-dodge-keyboard/blob/main/screenshots/static.gif" width="260">
