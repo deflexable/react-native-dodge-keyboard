@@ -30,7 +30,10 @@ yarn add react-native-dodge-keyboard
 
 ## Demo
 
-<img src="https://github.com/deflexable/react-native-dodge-keyboard/blob/main/screenshots/main.gif" width="360">
+<p>
+  <img src="https://github.com/deflexable/react-native-dodge-keyboard/blob/main/screenshots/main.gif" width="240">
+  <img src="https://github.com/deflexable/react-native-dodge-keyboard/blob/main/screenshots/android_main.gif" width="240">
+</p>
 
 ## Usage
 
@@ -71,7 +74,7 @@ Kindly check [examples/CustomFocusDodge.jsx](https://github.com/deflexable/react
 
 A demo of the example is attach below:
 
-<img src="https://github.com/deflexable/react-native-dodge-keyboard/blob/main/screenshots/custom.gif" width="360">
+<img src="https://github.com/deflexable/react-native-dodge-keyboard/blob/main/screenshots/custom.gif" width="240">
 
 
 ### Dodging static element
@@ -81,4 +84,4 @@ Kindly check [examples/ManualLifting.jsx](https://github.com/deflexable/react-na
 
 A demo of the example is attach below:
 
-<img src="https://github.com/deflexable/react-native-dodge-keyboard/blob/main/screenshots/static.gif" width="360">
+<img src="https://github.com/deflexable/react-native-dodge-keyboard/blob/main/screenshots/static.gif" width="240">
