@@ -83,7 +83,7 @@ export interface DodgeKeyboardProps {
 
 }
 
-export default function DodgeKeyboard(
+export function DodgeKeyboard(
     props: DodgeKeyboardProps
 ): React.ReactElement | null;
 

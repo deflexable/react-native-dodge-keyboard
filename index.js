@@ -1,7 +1,7 @@
 import { Children, cloneElement, createElement, forwardRef, isValidElement, memo, useEffect, useMemo, useRef, useState, useImperativeHandle } from "react";
 import { Animated, Dimensions, findNodeHandle, Keyboard, Platform, StyleSheet, UIManager, useAnimatedValue } from "react-native";
 
-const DodgeKeyboard = forwardRef(({ children, offset = 10, disabled, onHandleDodging, disableTagCheck, checkIfElementIsFocused }, ref) => {
+export const DodgeKeyboard = forwardRef(({ children, offset = 10, disabled, onHandleDodging, disableTagCheck, checkIfElementIsFocused }, ref) => {
     if (checkIfElementIsFocused !== undefined) {
         if (typeof checkIfElementIsFocused !== 'function')
             throw 'checkIfElementIsFocused should be a function';
@@ -140,14 +140,14 @@ const DodgeKeyboard = forwardRef(({ children, offset = 10, disabled, onHandleDod
                                             });
                                         }),
                                         new Promise(resolve => {
-                                            inputObj.measure((x, y, width, height, pageX, pageY) => { // y is dynamic
+                                            UIManager.measure(findNodeHandle(inputObj), (x, y, width, height, pageX, pageY) => { // y is dynamic
                                                 resolve({ py: pageY, layout: { x, y, width, height, pageX, pageY } });
                                             });
                                         }),
                                         new Promise((resolve, reject) => {
-                                            inputObj.measureLayout(scrollRef, (l, t, width, height) => { // t is fixed
+                                            UIManager.measureLayout(findNodeHandle(inputObj), findNodeHandle(scrollRef), reject, (l, t, width, height) => { // t is fixed
                                                 resolve({ t, h: height, relativeLayout: { left: l, top: t, width, height } });
-                                            }, reject);
+                                            });
                                         })
                                     ]).then(([{ h: sh, py: sy, scrollLayout }, { py: y, layout }, { t, h, relativeLayout }]) => {
 
@@ -198,7 +198,7 @@ const DodgeKeyboard = forwardRef(({ children, offset = 10, disabled, onHandleDod
                         }
                     }
                 }
-            } else {
+            } else if (!visible) {
                 setCurrentPaddedScroller();
                 clearPreviousDodge();
             }
@@ -333,7 +333,7 @@ const DodgeKeyboard = forwardRef(({ children, offset = 10, disabled, onHandleDod
                         ...inputNode.props,
                         __dodging_keyboard: true,
                         onFocus: (...args) => {
-                            doDodgeKeyboard.current();
+                            doDodgeKeyboard.current(lastKeyboardEvent.current);
                             return inputNode.props?.onFocus?.(...args);
                         },
                         onLayout: (...args) => {
@@ -392,7 +392,7 @@ const DodgeKeyboard = forwardRef(({ children, offset = 10, disabled, onHandleDod
                 },
                 ...isStandalone ? {
                     onFocus: (...args) => {
-                        doDodgeKeyboard.current();
+                        doDodgeKeyboard.current(lastKeyboardEvent.current);
                         return node.props?.onFocus?.(...args);
                     }
                 } : {},
@@ -436,8 +436,6 @@ const DodgeKeyboard = forwardRef(({ children, offset = 10, disabled, onHandleDod
         </ReactHijacker>
     );
 });
-
-export default DodgeKeyboard;
 
 const niceFunction = (func, message) => {
     return (...args) => {
