@@ -1,4 +1,5 @@
 # react-native-dodge-keyboard
+[![npm version](https://badge.fury.io/js/react-native-dodge-keyboard.svg)](https://www.npmjs.com/package/react-native-dodge-keyboard)
 
 ### Ultra-lightweight, zero-dependency keyboard dodging for React Native - works 100% of the time inside any scrollable view.
 
