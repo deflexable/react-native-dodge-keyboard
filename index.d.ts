@@ -87,28 +87,6 @@ export function DodgeKeyboard(
     props: DodgeKeyboardProps
 ): React.ReactElement | null;
 
-interface doHijackResult {
-    /**
-     * element to be replace with, providing this basically ignores the `props` field
-     */
-    element?: boolean;
-    /**
-     * props injected into the hijacked node.
-     */
-    props?: any;
-}
-
-interface ReactHijackerProps {
-    doHijack: (node: React.ReactNode, path: Array<any> | undefined) => doHijackResult,
-    enableLocator?: boolean | undefined;
-    children?: React.ReactNode;
-}
-
-export function ReactHijacker(props: ReactHijackerProps): React.ReactElement | null;
-export function __HijackNode(props: { children: () => React.ReactElement | null }): React.ReactElement | null;
-
-export function createHijackedElement(element?: React.ReactElement | null): { __element: React.ReactElement | null };
-
 export function isDodgeScrollable(element: React.ReactNode, disableTagCheck?: boolean): boolean;
 export function isDodgeInput(element: React.ReactNode, disableTagCheck?: boolean): boolean;
 

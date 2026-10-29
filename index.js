@@ -1,7 +1,8 @@
-import { Children, cloneElement, createElement, forwardRef, isValidElement, memo, useEffect, useMemo, useRef, useState, useImperativeHandle } from "react";
+import { cloneElement, forwardRef, useEffect, useMemo, useRef, useState, useImperativeHandle } from "react";
 import { Animated, Dimensions, findNodeHandle, Keyboard, Platform, StyleSheet, UIManager, useAnimatedValue } from "react-native";
+import MutateReact, { createMutantElement } from "mutate-react";
 
-export const DodgeKeyboard = forwardRef(({ children, offset = 10, disabled, onHandleDodging, disableTagCheck, checkIfElementIsFocused }, ref) => {
+export const DodgeKeyboard = forwardRef(({ children, offset = 10, disabled, onHandleDodging, disableTagCheck, checkIfElementIsFocused, _perceivedDodgeInputSize }, ref) => {
     if (checkIfElementIsFocused !== undefined) {
         if (typeof checkIfElementIsFocused !== 'function')
             throw 'checkIfElementIsFocused should be a function';
@@ -17,6 +18,8 @@ export const DodgeKeyboard = forwardRef(({ children, offset = 10, disabled, onHa
     }
 
     if (!isNumber(offset)) throw `offset must be a valid number but got ${offset}`;
+    if (_perceivedDodgeInputSize !== undefined && !isNumber(_perceivedDodgeInputSize))
+        throw `_perceivedDodgeInputSize must be a valid number but got ${_perceivedDodgeInputSize}`;
 
     const [currentPaddedScroller, setCurrentPaddedScroller] = useState();
 
@@ -149,20 +152,33 @@ export const DodgeKeyboard = forwardRef(({ children, offset = 10, disabled, onHa
                                                 resolve({ t, h: height, relativeLayout: { left: l, top: t, width, height } });
                                             });
                                         })
-                                    ]).then(([{ h: sh, py: sy, scrollLayout }, { py: y, layout }, { t, h, relativeLayout }]) => {
+                                    ]).then(([{ h: scrollH, py: scrollPY, scrollLayout }, { py: inputPY, layout }, { t: inputT, h: inputH, relativeLayout }]) => {
 
                                         const { dodge_keyboard_offset, dodge_keyboard_clipping } = props || {};
                                         const thisOffset = isNumber(dodge_keyboard_offset) ? dodge_keyboard_offset : offset;
 
-                                        const scrollInputY = y - sy;
+                                        const scrollInputY = inputPY - scrollPY;
 
-                                        if (scrollInputY >= 0 && scrollInputY <= sh) { // is input visible in viewport
-                                            const clampedLift = Math.min(h + thisOffset, keyboardInfo.screenY);
+                                        if (scrollInputY >= 0 && scrollInputY <= scrollH) { // is input visible in viewport
+                                            const clampedLift = Math.min(inputH + thisOffset, keyboardInfo.screenY);
+                                            const clampedLiftSpacing =
+                                                (_perceivedDodgeInputSize && inputH < _perceivedDodgeInputSize)
+                                                    ? Math.min(_perceivedDodgeInputSize + thisOffset, keyboardInfo.screenY)
+                                                    : undefined;
 
-                                            if (y + clampedLift >= keyboardInfo.screenY) { // is below keyboard
-                                                const requiredScrollY = (t - (keyboardInfo.screenY - sy)) + clampedLift;
+                                            if (inputPY + (clampedLiftSpacing ?? clampedLift) >= keyboardInfo.screenY) { // is below keyboard
+                                                const baseY = (inputT - (keyboardInfo.screenY - scrollPY));
+                                                let requiredScrollY = baseY + (clampedLiftSpacing ?? clampedLift);
                                                 // for lifting up the scroll-view
-                                                const liftUp = Math.max(0, requiredScrollY - t);
+                                                const liftUp = Math.max(0, requiredScrollY - inputT);
+
+                                                if (clampedLiftSpacing !== undefined) {
+                                                    if (liftUp) {
+                                                        requiredScrollY = (baseY + clampedLift) - liftUp;
+                                                        scrollPY -= liftUp;
+                                                    } else requiredScrollY = baseY + clampedLift;
+                                                }
+
                                                 clearPreviousDodge(scrollId);
                                                 if (liftUp > 0 || (dodge_keyboard_clipping && liftUp && previousLift.current.lift !== liftUp)) {
                                                     previousLift.current = { scrollId, lift: liftUp };
@@ -176,10 +192,8 @@ export const DodgeKeyboard = forwardRef(({ children, offset = 10, disabled, onHa
                                                     });
                                                 }
 
-                                                const scrollLift = Math.max(0, (sy + sh + (thisOffset >= 0 ? thisOffset : 0)) - keyboardInfo.screenY);
-                                                const newScrollY = Math.min(requiredScrollY, t);
-
-                                                // console.log('scrolling-to:', requiredScrollY, ' scrollLift:', scrollLift);
+                                                const scrollLift = Math.max(0, (scrollPY + scrollH + (thisOffset >= 0 ? thisOffset : 0)) - keyboardInfo.screenY);
+                                                const newScrollY = Math.max(0, Math.min(requiredScrollY, inputT));
                                                 if (scrollLift) {
                                                     setCurrentPaddedScroller([scrollId, scrollLift, newScrollY]);
                                                 } else {
@@ -275,7 +289,7 @@ export const DodgeKeyboard = forwardRef(({ children, offset = 10, disabled, onHa
     const nodeIdIte = useRef(0);
 
     const onHijackNode = node => {
-        if (offDodgeScan(node)) return createHijackedElement(node);
+        if (offDodgeScan(node)) return createMutantElement(node);
 
         const isStandalone = isDodgeInput(node);
         if (!isStandalone && !isDodgeScrollable(node, disableTagCheck)) return;
@@ -310,7 +324,7 @@ export const DodgeKeyboard = forwardRef(({ children, offset = 10, disabled, onHa
             }
 
             const injectChild = inputNode => {
-                if (offDodgeScan(inputNode)) return createHijackedElement(inputNode);
+                if (offDodgeScan(inputNode)) return createMutantElement(inputNode);
 
                 if (!isDodgeInput(inputNode, disableTagCheck)) return;
 
@@ -360,10 +374,8 @@ export const DodgeKeyboard = forwardRef(({ children, offset = 10, disabled, onHa
                     return cloneElement(inputNode, newProps);
                 }
 
-                return createHijackedElement(
-                    <__HijackNode>
-                        {inputRenderer}
-                    </__HijackNode>
+                return createMutantElement(
+                    <DodgeMutantNode2 onRender={inputRenderer} />
                 );
             }
 
@@ -404,36 +416,31 @@ export const DodgeKeyboard = forwardRef(({ children, offset = 10, disabled, onHa
                     hasInternalList ? {
                         renderItem: (...args) => {
                             return (
-                                <ReactHijacker
-                                    doHijack={injectChild}>
+                                <MutateReact onHandleMutation={injectChild}>
                                     {rootRenderItem(...args)}
-                                </ReactHijacker>
+                                </MutateReact>
                             );
                         }
                     } : {
                         children:
-                            ReactHijacker({
-                                children: node.props?.children,
-                                doHijack: injectChild
-                            })
+                            <MutateReact onHandleMutation={injectChild}>
+                                {node.props?.children}
+                            </MutateReact>
                     }
             };
 
             return cloneElement(node, newProps);
         }
 
-        return createHijackedElement(
-            <__HijackNode>
-                {renderer}
-            </__HijackNode>
+        return createMutantElement(
+            <DodgeMutantNode1 onRender={renderer} />
         );
     };
 
     return (
-        <ReactHijacker
-            doHijack={onHijackNode}>
+        <MutateReact onHandleMutation={onHijackNode}>
             {children}
-        </ReactHijacker>
+        </MutateReact>
     );
 });
 
@@ -449,153 +456,12 @@ const niceFunction = (func, message) => {
 
 const isNumber = t => typeof t === 'number' && !isNaN(t) && Number.isFinite(t);
 
-const REACT_SYMBOLS = {
-    forwardRef: Symbol.for('react.forward_ref'),
-    memo: Symbol.for('react.memo')
-};
-
-export function ReactHijacker({ children, doHijack, enableLocator }) {
-    const instantDoHijack = useRef();
-    instantDoHijack.current = doHijack;
-
-    const injectIntoTree = (node, path) => {
-        if (!node) return node;
-        if (Array.isArray(node)) {
-            return Children.map(node, (v, i) => injectIntoTree(v, path && [...path, i]));
-        }
-        if (!isValidElement(node)) return node;
-
-        if (path) path = [...path, getNodeId(node)];
-
-        let thisObj;
-        if (Object.hasOwn((thisObj = instantDoHijack.current?.(node, path)) || {}, '__element')) {
-            return thisObj.__element;
-        }
-
-        if (!isHostElement(node)) {
-            const wrapNodeType = (nodeType, pathway, pathKey) => {
-                if (pathway) pathway = [...pathway, getNodeId(undefined, nodeType, pathKey)];
-
-                // if (doLogging) console.log('wrapNodeType path:', pathway, ' node:', nodeType);
-                const render = (renderedNode) => {
-                    // if (doLogging) console.log('deep path:', pathway, ' node:', renderedNode);
-                    return injectIntoTree(renderedNode, pathway && [...pathway, 0]);
-                }
-
-                if (typeof nodeType === 'function') { // check self closed tag
-                    return hijackRender(nodeType, render);
-                } else if (nodeType?.$$typeof === REACT_SYMBOLS.forwardRef) {
-                    return forwardRef(hijackRender(nodeType.render, render));
-                } else if (nodeType?.$$typeof === REACT_SYMBOLS.memo) {
-                    const newType = memo(wrapNodeType(nodeType.type, pathway), nodeType.compare);
-                    newType.displayName = nodeType.displayName || nodeType.name;
-                    return newType;
-                }
-                return nodeType;
-            }
-
-            if (
-                typeof node.type === 'function' || // check self closed tag
-                node.type?.$$typeof === REACT_SYMBOLS.forwardRef || // check forwardRef
-                node.type?.$$typeof === REACT_SYMBOLS.memo // check memo
-            ) {
-                // if (doLogging) console.log('doLog path:', path, ' node:', node);
-                return (
-                    <__HijackNodePath>
-                        {() => {
-                            const hijackType = useMemo(() =>
-                                wrapNodeType(node.type, path && path.slice(0, -1), node.key),
-                                [node.type]
-                            );
-
-                            return createElement(
-                                hijackType,
-                                {
-                                    ...node.props,
-                                    key: node.key
-                                },
-                                node.props?.children
-                            );
-                        }}
-                    </__HijackNodePath>
-                );
-            }
-        }
-
-        const children = node.props?.children;
-        if (children)
-            return cloneElement(node, {
-                children: injectIntoTree(children, path && [...path, 0])
-            });
-
-        return node;
-    };
-
-    return injectIntoTree(children, enableLocator ? [] : undefined);
-};
-
-export const createHijackedElement = (element) => ({ __element: element });
-export function __HijackNode({ children }) {
-    return children?.();
+function DodgeMutantNode1({ onRender }) {
+    return onRender();
 }
 
-function __HijackNodePath({ children }) {
-    return children?.();
-}
-
-const hijackRender = (type, doHijack) =>
-    new Proxy(type, {
-        apply(target, thisArg, args) {
-            const renderedNode = Reflect.apply(target, thisArg, args);
-            return doHijack(renderedNode);
-        },
-        get(target, prop) {
-            return target[prop];
-        },
-        set(target, prop, value) {
-            target[prop] = value;
-            return true;
-        }
-    });
-
-function getNodeId(node, typeObj, typeKey) {
-    if ((!node && !typeObj) || (node && !isValidElement(node))) return `${node}`;
-
-    const type = typeObj || node?.type;
-    const withKey = (s) => `${s}:${[typeKey || node?.key].find(v => ![null, undefined].includes(v)) || null}`;
-    const withWrapper = (tag, name) => `@${tag}#${name}#`;
-
-    // Host component
-    if (typeof type === 'string' || typeof type === 'number') return withKey(type);
-
-    if (type?.displayName) return withKey(type.displayName);
-
-    // Function component
-    if (typeof type === "function") return withKey(type.name);
-
-    if (type?.$$typeof === REACT_SYMBOLS.forwardRef) { // forwardRef
-        return withKey(withWrapper('forwardRef', type.render?.name));
-    } else if (type?.$$typeof === REACT_SYMBOLS.memo) { // memo
-        return withKey(withWrapper('memo', ''));
-    }
-
-    return withKey(
-        type?.name ||
-        // node?.name ||
-        withWrapper('Fragment', type?.$$typeof?.toString?.() || '')
-    );
-};
-
-export function isHostElement(node) {
-    if (!node) return true;
-    const t = typeof node.type;
-
-    return (
-        t === 'string' ||
-        t === 'number' || // RN internal tags
-        node?.type?.Context !== undefined ||
-        (t !== 'function' && t !== 'object')
-    );
+function DodgeMutantNode2({ onRender }) {
+    return onRender();
 }
 
 const offDodgeScan = (node) => node?.props?.dodge_keyboard_scan_off || node?.props?.__dodging_keyboard;
