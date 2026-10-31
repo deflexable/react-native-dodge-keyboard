@@ -1,6 +1,6 @@
 {
   "name": "react-native-dodge-keyboard",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "react-native-dodge-keyboard is a tiny library designed to flawlessly move your UI out of the way of the keyboard",
   "keywords": [
     "react-native",
@@ -32,6 +32,6 @@
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "dependencies": {
-    "mutate-react": "1.0.2"
+    "mutate-react": "1.0.3"
   }
 }
