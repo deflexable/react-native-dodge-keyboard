@@ -23,6 +23,9 @@
   "author": "Anthony",
   "type": "module",
   "main": "index.js",
+  "engines": {
+    "node": ">=18"
+  },
   "types": "./index.d.ts",
   "peerDependencies": {
     "react": "*",
